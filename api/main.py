@@ -608,82 +608,96 @@ def get_inventory_risk_summary():
 def predict_demand(
     request: DemandRequest
 ):
-
     try:
+        # =========================================================
+        # تشخيص طلب التنبؤ بالطلب
+        # =========================================================
+        print("=" * 60)
+        print("DEMAND PREDICTION REQUEST")
+        print("=" * 60)
 
-        # ----------------------------------------------------
-        # تحميل النموذج عند الحاجة فقط
-        # ----------------------------------------------------
+        print("Store ID:", request.store_id)
+        print("Total Price:", request.total_price)
+        print("Base Price:", request.base_price)
+
+        # =========================================================
+        # تحميل نموذج التنبؤ
+        # =========================================================
+        print("Loading DemandModel...")
 
         model = get_demand_model()
 
+        print("DemandModel object:", model)
+        print("DemandModel type:", type(model))
 
         if model is None:
+            print("ERROR: Demand model is not available.")
 
             return {
-
-                "success":
-                    False,
-
-                "error":
-                    "Demand model is not available."
+                "success": False,
+                "error": "Demand model is not available."
             }
 
+        # =========================================================
+        # تنفيذ التنبؤ
+        # =========================================================
+        print("Calling model.predict()...")
 
-        prediction = (
-            model.predict(
-                store_id=request.store_id,
-
-                total_price=request.total_price,
-
-                base_price=request.base_price
-            )
+        prediction = model.predict(
+            store_id=request.store_id,
+            total_price=request.total_price,
+            base_price=request.base_price
         )
 
+        print("Prediction:", prediction)
+        print("Prediction type:", type(prediction))
 
+        # =========================================================
+        # إرجاع النتيجة
+        # =========================================================
         return {
-
-            "success":
-                True,
-
-            "model":
-                "Random Forest Regressor",
+            "success": True,
+            "model": "Random Forest Regressor",
 
             "input": {
-
-                "store_id":
-                    request.store_id,
-
-                "total_price":
-                    request.total_price,
-
-                "base_price":
-                    request.base_price
+                "store_id": request.store_id,
+                "total_price": request.total_price,
+                "base_price": request.base_price
             },
 
-            "prediction":
+            "prediction": float(prediction),
+
+            "predicted_units_sold": round(
                 float(prediction),
-
-            "predicted_units_sold":
-                round(
-                    float(prediction),
-                    2
-                )
+                2
+            )
         }
-
 
     except Exception as e:
 
+        # =========================================================
+        # طباعة الخطأ الكامل في Render Logs
+        # =========================================================
+        import traceback
+
+        print("=" * 60)
+        print("DEMAND PREDICTION ERROR")
+        print("=" * 60)
+
+        print("Error type:", type(e).__name__)
+        print("Error:", str(e))
+
+        print("Full traceback:")
+        traceback.print_exc()
+
+        # =========================================================
+        # إرجاع معلومات الخطأ للواجهة
+        # =========================================================
         return {
-
-            "success":
-                False,
-
-            "error":
-                str(e)
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
         }
-
-
 # ============================================================
 # 16. نتائج نماذج التنبؤ بالطلب
 # ============================================================
