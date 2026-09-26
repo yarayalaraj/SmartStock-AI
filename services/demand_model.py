@@ -29,58 +29,7 @@ from services.demand_training_dataset import DemandTrainingDataset
 
 class DemandModel:
 
-    def __init__(self):
-
-        self.dataset = DemandTrainingDataset()
-
-        # Features المستخدمة في التدريب
-        self.features = [
-            "Store ID",
-            "Total Price",
-            "Base Price",
-            "discount_amount",
-            "discount_percentage",
-            "price_ratio"
-        ]
-
-        self.target = "Units Sold"
-
-        # ====================================================
-        # Models
-        # ====================================================
-
-        self.models = {
-
-            "Linear Regression": Pipeline([
-                (
-                    "scaler",
-                    StandardScaler()
-                ),
-                (
-                    "model",
-                    LinearRegression()
-                )
-            ]),
-
-            "Random Forest": RandomForestRegressor(
-                n_estimators=100,
-                random_state=42,
-                n_jobs=-1
-            ),
-
-            "Gradient Boosting": GradientBoostingRegressor(
-                n_estimators=100,
-                learning_rate=0.05,
-                max_depth=3,
-                random_state=42
-            )
-        }
-
-        self.results = {}
-
-        self.best_model_name = None
-
-        self.best_model = None
+    def __init__(self, load_for_training=False):
 
         # ====================================================
         # Paths
@@ -112,11 +61,87 @@ class DemandModel:
             "demand_model_results.csv"
         )
 
+        # ====================================================
+        # Features
+        # ====================================================
+
+        self.features = [
+            "Store ID",
+            "Total Price",
+            "Base Price",
+            "discount_amount",
+            "discount_percentage",
+            "price_ratio"
+        ]
+
+        self.target = "Units Sold"
+
+        # ====================================================
+        # Runtime variables
+        # ====================================================
+
+        self.results = {}
+
+        self.best_model_name = None
+
+        self.best_model = None
+
+        # ====================================================
+        # Training mode
+        # ====================================================
+
+        # لا ننشئ نماذج التدريب عند تشغيل API.
+        # يتم إنشاؤها فقط إذا طلبنا التدريب صراحةً.
+        self.models = {}
+
+        if load_for_training:
+
+            self._initialize_training_models()
+
+            self.dataset = DemandTrainingDataset()
+
+    # ========================================================
+    # Initialize Training Models
+    # ========================================================
+
+    def _initialize_training_models(self):
+
+        self.models = {
+
+            "Linear Regression": Pipeline([
+                (
+                    "scaler",
+                    StandardScaler()
+                ),
+                (
+                    "model",
+                    LinearRegression()
+                )
+            ]),
+
+            "Random Forest": RandomForestRegressor(
+                n_estimators=100,
+                random_state=42,
+                n_jobs=-1
+            ),
+
+            "Gradient Boosting": GradientBoostingRegressor(
+                n_estimators=100,
+                learning_rate=0.05,
+                max_depth=3,
+                random_state=42
+            )
+        }
+
     # ========================================================
     # Prepare Data
     # ========================================================
 
     def prepare_data(self):
+
+        if not hasattr(self, "dataset"):
+
+            self.dataset = DemandTrainingDataset()
 
         X, y, dataframe = (
             self.dataset.get_features_and_target()
@@ -133,6 +158,12 @@ class DemandModel:
     # ========================================================
 
     def train(self):
+
+        # إذا لم تكن نماذج التدريب موجودة،
+        # نقوم بإنشائها فقط عند طلب التدريب.
+        if not self.models:
+
+            self._initialize_training_models()
 
         X, y, dataframe = (
             self.prepare_data()
@@ -197,6 +228,7 @@ class DemandModel:
 
             print()
             print("-" * 70)
+
             print(
                 "Training:",
                 model_name
@@ -258,7 +290,7 @@ class DemandModel:
             )
 
             print(
-                "R²  :",
+                "R2  :",
                 round(r2, 4)
             )
 
@@ -297,7 +329,7 @@ class DemandModel:
         )
 
         print(
-            "Best R²:",
+            "Best R2:",
             round(
                 self.results[
                     self.best_model_name
@@ -364,6 +396,10 @@ class DemandModel:
 
     def load_model(self):
 
+        if self.best_model is not None:
+
+            return self.best_model
+
         if not os.path.exists(
             self.model_path
         ):
@@ -372,8 +408,16 @@ class DemandModel:
                 "Demand model has not been trained yet."
             )
 
+        print(
+            "Loading demand model..."
+        )
+
         self.best_model = joblib.load(
             self.model_path
+        )
+
+        print(
+            "Demand model loaded successfully."
         )
 
         return self.best_model
@@ -389,6 +433,7 @@ class DemandModel:
         base_price
     ):
 
+        # تحميل النموذج فقط عند الحاجة
         if self.best_model is None:
 
             self.load_model()
@@ -465,7 +510,7 @@ class DemandModel:
             prediction[0]
         )
 
-        # لا نسمح بقيمة سالبة
+        # منع القيم السالبة
         predicted_demand = max(
             0,
             predicted_demand

@@ -10,6 +10,7 @@
 # 3. تحديد نوع السؤال.
 # 4. تشغيل Transformer لمعالجة السؤال وتوليد استجابة أولية.
 # 5. استخراج المعلومات الحقيقية من بيانات SmartStock.
+# 5. استخراج المعلومات الحقيقيpython -c "from services.models.chatbot_service import detect_question_type; print(detect_question_type('ما مخاطر المخزون؟')ة من بيانات SmartStock.
 # 6. بناء إجابة factual دقيقة من بيانات النظام.
 # 7. استخدام Transformer للأسئلة العامة عندما يكون ذلك مناسبًا.
 #
@@ -40,34 +41,41 @@ import os
 import re
 
 import pandas as pd
-import torch
-
-from transformers import (
-    AutoTokenizer,
-    AutoModelForSeq2SeqLM
-)
 
 
 # ============================================================
 # 2. PROJECT PATHS
 # ============================================================
 
-PROJECT_ROOT = r"C:\Users\yara\py y\finlproj13"
+# استخدام Path بشكل ديناميكي بدل المسار الثابت الخاص بجهاز Windows.
+#
+# هذا يجعل المشروع يعمل:
+# - على Windows
+# - على Render Linux
+# - داخل PyCharm
+# - داخل GitHub
+#
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 # ملف تحليل المخزون والمخاطر
-INVENTORY_RISK_FILE = os.path.join(
-    PROJECT_ROOT,
-    "data",
-    "processed",
-    "inventory_expiry_risk_analysis.csv"
+INVENTORY_RISK_FILE = (
+    PROJECT_ROOT
+    / "data"
+    / "processed"
+    / "inventory_expiry_risk_analysis.csv"
 )
 
+
 # ملف نتائج نماذج التنبؤ بالطلب
-DEMAND_RESULTS_FILE = os.path.join(
-    PROJECT_ROOT,
-    "models",
-    "demand_model_results.csv"
+DEMAND_RESULTS_FILE = (
+    PROJECT_ROOT
+    / "models"
+    / "demand_model_results.csv"
 )
+
 
 # Transformer
 MODEL_NAME = "google/flan-t5-small"
@@ -77,6 +85,10 @@ MODEL_NAME = "google/flan-t5-small"
 # 3. GLOBAL VARIABLES
 # ============================================================
 
+# يتم تحميل Transformer عند أول استخدام فقط.
+#
+# لا يتم تحميل النموذج عند تشغيل FastAPI.
+#
 tokenizer = None
 model = None
 
@@ -93,7 +105,8 @@ def load_chatbot_model():
     لا يتم تحميل النموذج عند تشغيل FastAPI،
     وإنما عند أول استخدام للـ Chatbot.
 
-    النموذج يعمل على CPU.
+    PyTorch و Transformers يتم استيرادهما هنا فقط
+    حتى لا يستهلك FastAPI الذاكرة عند Startup.
     """
 
     global tokenizer
@@ -103,26 +116,51 @@ def load_chatbot_model():
     if tokenizer is not None and model is not None:
         return
 
+    # ========================================================
+    # Lazy Imports
+    # ========================================================
+
+    import torch
+
+    from transformers import (
+        AutoTokenizer,
+        AutoModelForSeq2SeqLM
+    )
+
     print("=" * 70)
     print("LOADING TRANSFORMER CHATBOT")
     print("=" * 70)
 
     print(f"Model: {MODEL_NAME}")
 
+    # --------------------------------------------------------
     # تحميل Tokenizer
+    # --------------------------------------------------------
+
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_NAME
     )
 
+    # --------------------------------------------------------
     # تحميل Transformer
+    # --------------------------------------------------------
+
     model = AutoModelForSeq2SeqLM.from_pretrained(
         MODEL_NAME
     )
 
+    # --------------------------------------------------------
     # تشغيل النموذج على CPU
-    model.to(torch.device("cpu"))
+    # --------------------------------------------------------
 
+    model.to(
+        torch.device("cpu")
+    )
+
+    # --------------------------------------------------------
     # وضع Evaluation
+    # --------------------------------------------------------
+
     model.eval()
 
     print(
@@ -145,9 +183,7 @@ def load_inventory_data():
     inventory_expiry_risk_analysis.csv
     """
 
-    if not os.path.exists(
-        INVENTORY_RISK_FILE
-    ):
+    if not INVENTORY_RISK_FILE.exists():
         return None
 
     try:
@@ -177,9 +213,7 @@ def load_demand_results():
     قراءة نتائج نماذج التنبؤ بالطلب.
     """
 
-    if not os.path.exists(
-        DEMAND_RESULTS_FILE
-    ):
+    if not DEMAND_RESULTS_FILE.exists():
         return None
 
     try:
@@ -242,7 +276,10 @@ def get_inventory_summary():
 
     summary = []
 
+    # --------------------------------------------------------
     # عدد المنتجات
+    # --------------------------------------------------------
+
     summary.append(
         f"Total products in inventory analysis: {len(df)}"
     )
@@ -317,7 +354,9 @@ def get_inventory_summary():
                 f"{average_shelf_life:.1f} days"
             )
 
-    return "\n".join(summary)
+    return "\n".join(
+        summary
+    )
 
 
 # ============================================================
@@ -408,7 +447,9 @@ def get_risk_summary():
                 f"{scores.max():.2f}"
             )
 
-    return "\n".join(summary)
+    return "\n".join(
+        summary
+    )
 
 
 # ============================================================
@@ -427,7 +468,6 @@ def detect_question_type(question):
     image
     general
 
-    ملاحظة:
     يتم إعطاء risk أولوية على inventory،
     لأن السؤال قد يحتوي كلمة "مخزون" وكلمة "مخاطر"
     في نفس الوقت.
@@ -437,20 +477,9 @@ def detect_question_type(question):
         question
     ).lower()
 
-    # --------------------------------------------------------
+    # ========================================================
     # Risk
-    # --------------------------------------------------------
-
-    # --------------------------------------------------------
-    # Risk
-    # --------------------------------------------------------
-    #
-    # نضع هنا الكلمات التي تشير إلى "مستوى الخطر"
-    # وليس مجرد مدة الصلاحية.
-    #
-    # كلمة "صلاحية" وحدها لا تعني أن المستخدم يسأل
-    # عن مستوى المخاطر، لذلك لا نضعها هنا.
-    # --------------------------------------------------------
+    # ========================================================
 
     risk_keywords = [
         "خطر",
@@ -481,9 +510,9 @@ def detect_question_type(question):
 
         return "risk"
 
-    # --------------------------------------------------------
+    # ========================================================
     # Demand / Sales
-    # --------------------------------------------------------
+    # ========================================================
 
     demand_keywords = [
         "طلب",
@@ -509,9 +538,9 @@ def detect_question_type(question):
 
         return "demand"
 
-    # --------------------------------------------------------
+    # ========================================================
     # Image / Waste Classification
-    # --------------------------------------------------------
+    # ========================================================
 
     image_keywords = [
         "صورة",
@@ -533,9 +562,9 @@ def detect_question_type(question):
 
         return "image"
 
-    # --------------------------------------------------------
+    # ========================================================
     # Inventory
-    # --------------------------------------------------------
+    # ========================================================
 
     inventory_keywords = [
         "مخزون",
@@ -580,9 +609,9 @@ def build_system_context(question):
 
     context_parts = []
 
-    # --------------------------------------------------------
+    # ========================================================
     # Inventory
-    # --------------------------------------------------------
+    # ========================================================
 
     if question_type in [
         "inventory",
@@ -594,9 +623,9 @@ def build_system_context(question):
             + get_inventory_summary()
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # Risk
-    # --------------------------------------------------------
+    # ========================================================
 
     if question_type in [
         "risk",
@@ -609,9 +638,9 @@ def build_system_context(question):
             + get_risk_summary()
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # Demand
-    # --------------------------------------------------------
+    # ========================================================
 
     if question_type in [
         "demand",
@@ -626,9 +655,13 @@ def build_system_context(question):
         ):
 
             # نرسل عددًا محدودًا من المعلومات.
+            #
+            # لا نرسل DataFrame ضخم إلى Transformer.
+            limited_demand = demand_df.head(10)
+
             context_parts.append(
                 "DEMAND MODEL INFORMATION:\n"
-                + demand_df.to_string(
+                + limited_demand.to_string(
                     index=False
                 )
             )
@@ -639,9 +672,9 @@ def build_system_context(question):
                 "No demand model results are available."
             )
 
-    # --------------------------------------------------------
+    # ========================================================
     # Image
-    # --------------------------------------------------------
+    # ========================================================
 
     if question_type == "image":
 
@@ -678,7 +711,10 @@ def get_demand_facts():
 
     facts = {}
 
+    # --------------------------------------------------------
     # البحث عن أسماء الأعمدة
+    # --------------------------------------------------------
+
     model_column = find_column(
         df,
         [
@@ -716,19 +752,19 @@ def get_demand_facts():
     )
 
     # --------------------------------------------------------
-    # إذا كانت أسماء الأعمدة مختلفة،
-    # نحاول استخدام أول الأعمدة المناسبة.
+    # استخراج معلومات Random Forest
     # --------------------------------------------------------
 
     if model_column is not None:
 
-        models = df[
-            model_column
-        ].astype(str).tolist()
+        models = (
+            df[model_column]
+            .astype(str)
+            .tolist()
+        )
 
         facts["models"] = models
 
-        # Random Forest
         for index, model_name in enumerate(
             models
         ):
@@ -738,19 +774,49 @@ def get_demand_facts():
                 row = df.iloc[index]
 
                 if r2_column is not None:
-                    facts["random_forest_r2"] = float(
-                        row[r2_column]
-                    )
+
+                    try:
+
+                        facts["random_forest_r2"] = float(
+                            row[r2_column]
+                        )
+
+                    except (
+                        ValueError,
+                        TypeError
+                    ):
+
+                        pass
 
                 if mae_column is not None:
-                    facts["random_forest_mae"] = float(
-                        row[mae_column]
-                    )
+
+                    try:
+
+                        facts["random_forest_mae"] = float(
+                            row[mae_column]
+                        )
+
+                    except (
+                        ValueError,
+                        TypeError
+                    ):
+
+                        pass
 
                 if rmse_column is not None:
-                    facts["random_forest_rmse"] = float(
-                        row[rmse_column]
-                    )
+
+                    try:
+
+                        facts["random_forest_rmse"] = float(
+                            row[rmse_column]
+                        )
+
+                    except (
+                        ValueError,
+                        TypeError
+                    ):
+
+                        pass
 
                 break
 
@@ -829,7 +895,10 @@ def create_factual_fallback(question):
 
         total = len(df)
 
+        # ----------------------------------------------------
         # سؤال عن فئة معينة
+        # ----------------------------------------------------
+
         if (
             "high risk" in question_lower
             or "عالية المخاطر" in question_lower
@@ -864,7 +933,10 @@ def create_factual_fallback(question):
                 f"المخاطر المنخفضة من أصل {total} منتجًا."
             )
 
+        # ----------------------------------------------------
         # التوزيع الكامل
+        # ----------------------------------------------------
+
         return (
             f"توزيع مخاطر المخزون في SmartStock: "
             f"{low} منتج منخفض المخاطر، "
@@ -943,7 +1015,10 @@ def create_factual_fallback(question):
                 "لا توجد نتائج متاحة لنموذج التنبؤ بالطلب حاليًا."
             )
 
+        # ----------------------------------------------------
         # السؤال عن Random Forest
+        # ----------------------------------------------------
+
         if (
             "random forest" in question_lower
             or "أفضل نموذج" in question_lower
@@ -1059,14 +1134,20 @@ def is_useful_response(response):
 
     normalized = response.strip()
 
+    # --------------------------------------------------------
     # رقم فقط
+    # --------------------------------------------------------
+
     if re.fullmatch(
         r"[\d.,%]+",
         normalized
     ):
         return False
 
+    # --------------------------------------------------------
     # إجابات عامة جدًا
+    # --------------------------------------------------------
+
     useless_answers = [
         "yes",
         "no",
@@ -1081,11 +1162,13 @@ def is_useful_response(response):
     ]
 
     if normalized.lower() in useless_answers:
-
         return False
 
-    if len(normalized) < 8:
+    # --------------------------------------------------------
+    # إجابة قصيرة جدًا
+    # --------------------------------------------------------
 
+    if len(normalized) < 8:
         return False
 
     return True
@@ -1107,9 +1190,22 @@ def run_transformer(
     داخل النظام.
 
     لا نعتبر الناتج مصدرًا موثوقًا للأرقام.
+
+    PyTorch يتم تحميله هنا فقط عند استخدام Transformer.
     """
 
+    # ========================================================
+    # Lazy Import
+    # ========================================================
+
+    import torch
+
+    # تحميل النموذج عند أول استخدام
     load_chatbot_model()
+
+    # ========================================================
+    # بناء Prompt
+    # ========================================================
 
     prompt = f"""
 You are an assistant for SmartStock AI.
@@ -1126,12 +1222,20 @@ Question:
 Give a short answer.
 """
 
+    # ========================================================
+    # Tokenization
+    # ========================================================
+
     inputs = tokenizer(
         prompt,
         return_tensors="pt",
         truncation=True,
         max_length=768
     )
+
+    # ========================================================
+    # Generate
+    # ========================================================
 
     with torch.no_grad():
 
@@ -1142,6 +1246,10 @@ Give a short answer.
             early_stopping=True,
             no_repeat_ngram_size=2
         )
+
+    # ========================================================
+    # Decode
+    # ========================================================
 
     response = tokenizer.decode(
         outputs[0],
@@ -1177,9 +1285,9 @@ def generate_response(
     Factual Answer
     """
 
-    # --------------------------------------------------------
+    # ========================================================
     # تنظيف السؤال
-    # --------------------------------------------------------
+    # ========================================================
 
     if question is None:
 
@@ -1197,25 +1305,25 @@ def generate_response(
             "من فضلك اكتب سؤالك."
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # تحديد نوع السؤال
-    # --------------------------------------------------------
+    # ========================================================
 
     question_type = detect_question_type(
         question
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # Context
-    # --------------------------------------------------------
+    # ========================================================
 
     context = build_system_context(
         question
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # تشغيل Transformer
-    # --------------------------------------------------------
+    # ========================================================
 
     try:
 
@@ -1239,14 +1347,13 @@ def generate_response(
 
         transformer_response = ""
 
-    # --------------------------------------------------------
-    # الأسئلة المتعلقة ببيانات SmartStock
+    # ========================================================
+    # أسئلة SmartStock
     #
-    # هنا نستخدم الإجابة factual المباشرة من البيانات.
+    # نستخدم الإجابة factual المباشرة من البيانات.
     #
-    # السبب:
     # FLAN-T5-small ليس مصدرًا موثوقًا للأرقام.
-    # --------------------------------------------------------
+    # ========================================================
 
     if question_type in [
         "inventory",
@@ -1259,12 +1366,12 @@ def generate_response(
             question
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # الأسئلة العامة
     #
     # إذا كانت إجابة Transformer مفيدة نستخدمها.
     # وإلا نستخدم fallback.
-    # --------------------------------------------------------
+    # ========================================================
 
     if is_useful_response(
         transformer_response

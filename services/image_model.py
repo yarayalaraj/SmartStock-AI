@@ -1,5 +1,3 @@
-
-
 # ============================================================
 # SMARTSTOCK AI
 # IMAGE AI - REALWASTE WASTE CLASSIFICATION
@@ -11,9 +9,6 @@ import json
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-import tensorflow as tf
 
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
@@ -32,8 +27,10 @@ from sklearn.metrics import (
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# مسار Dataset الحقيقي الموجود على القرص H
-DATASET_DIR = Path(r"H:\SmartStockData\RealWaste\dataset")
+# Dataset الحقيقي الموجود على القرص H
+DATASET_DIR = Path(
+    r"H:\SmartStockData\RealWaste\dataset"
+)
 
 # مجلد حفظ النموذج
 MODEL_DIR = PROJECT_ROOT / "models"
@@ -44,70 +41,134 @@ PLOTS_DIR = PROJECT_ROOT / "plots"
 # مجلد حفظ النتائج
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 
-# إنشاء المجلدات إذا لم تكن موجودة
-MODEL_DIR.mkdir(parents=True, exist_ok=True)
-PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+# إنشاء المجلدات
+MODEL_DIR.mkdir(
+    parents=True,
+    exist_ok=True
+)
 
+PLOTS_DIR.mkdir(
+    parents=True,
+    exist_ok=True
+)
+
+PROCESSED_DIR.mkdir(
+    parents=True,
+    exist_ok=True
+)
 
 # ============================================================
 # 2. إعدادات Image AI
 # ============================================================
 
-# رفع حجم الصور من 160 إلى 224 للحصول على تفاصيل أكثر
 IMG_SIZE = (224, 224)
 
-# حجم Batch
 BATCH_SIZE = 32
 
-# تثبيت العشوائية للحصول على تقسيم قابل لإعادة الإنتاج
 SEED = 42
 
-# 15% للاختبار
 TEST_SPLIT = 0.15
 
-# 15% للتحقق
 VALIDATION_SPLIT = 0.15
 
-# المرحلة الأولى
 INITIAL_EPOCHS = 8
 
-# المرحلة الثانية Fine-Tuning
 FINE_TUNE_EPOCHS = 20
 
-# إجمالي عدد Epochs
-TOTAL_EPOCHS = INITIAL_EPOCHS + FINE_TUNE_EPOCHS
+TOTAL_EPOCHS = (
+    INITIAL_EPOCHS
+    + FINE_TUNE_EPOCHS
+)
 
-# عدد الطبقات التي سيتم فتحها في Fine-Tuning
-# سنفتح آخر 40 طبقة تقريبًا من MobileNetV2
 FINE_TUNE_LAST_LAYERS = 40
 
-AUTOTUNE = tf.data.AUTOTUNE
+# ============================================================
+# Lazy TensorFlow
+# ============================================================
 
+# مهم:
+# لا نستورد TensorFlow عند تشغيل API.
+#
+# TensorFlow سيتم تحميله فقط عندما:
+# 1. نريد تدريب النموذج
+# 2. نريد عمل prediction
+#
+# هذا يقلل استهلاك RAM عند تشغيل FastAPI.
+
+_tf = None
+
+
+def get_tensorflow():
+    """
+    تحميل TensorFlow عند الحاجة فقط.
+    """
+
+    global _tf
+
+    if _tf is None:
+
+        print(
+            "Loading TensorFlow..."
+        )
+
+        import tensorflow as tf
+
+        _tf = tf
+
+        # تثبيت Random Seed
+        tf.keras.utils.set_random_seed(
+            SEED
+        )
+
+        print(
+            "TensorFlow loaded successfully."
+        )
+
+    return _tf
+
+
+# ============================================================
 # أسماء ملفات النموذج والنتائج
-MODEL_PATH = MODEL_DIR / "image_mobilenetv2.keras"
-BEST_MODEL_PATH = MODEL_DIR / "image_mobilenetv2_best.keras"
+# ============================================================
 
-CLASS_NAMES_PATH = MODEL_DIR / "image_class_names.json"
+MODEL_PATH = (
+    MODEL_DIR
+    / "image_mobilenetv2.keras"
+)
 
-HISTORY_PATH = PROCESSED_DIR / "image_training_history.csv"
+BEST_MODEL_PATH = (
+    MODEL_DIR
+    / "image_mobilenetv2_best.keras"
+)
 
-METRICS_PATH = PROCESSED_DIR / "image_model_metrics.csv"
+CLASS_NAMES_PATH = (
+    MODEL_DIR
+    / "image_class_names.json"
+)
 
-REPORT_PATH = PROCESSED_DIR / "image_classification_report.csv"
+HISTORY_PATH = (
+    PROCESSED_DIR
+    / "image_training_history.csv"
+)
 
-SPLIT_SUMMARY_PATH = PROCESSED_DIR / "image_dataset_split_summary.csv"
+METRICS_PATH = (
+    PROCESSED_DIR
+    / "image_model_metrics.csv"
+)
+
+REPORT_PATH = (
+    PROCESSED_DIR
+    / "image_classification_report.csv"
+)
+
+SPLIT_SUMMARY_PATH = (
+    PROCESSED_DIR
+    / "image_dataset_split_summary.csv"
+)
 
 
 # ============================================================
-# 3. تثبيت Random Seed
-# ============================================================
-
-tf.keras.utils.set_random_seed(SEED)
-
-
-# ============================================================
-# 4. فحص Dataset
+# 3. فحص Dataset
 # ============================================================
 
 def check_dataset():
@@ -123,8 +184,10 @@ def check_dataset():
     print(DATASET_DIR)
 
     if not DATASET_DIR.exists():
+
         raise FileNotFoundError(
-            f"Dataset غير موجود في المسار:\n{DATASET_DIR}"
+            f"Dataset غير موجود في المسار:\n"
+            f"{DATASET_DIR}"
         )
 
     class_directories = sorted(
@@ -136,6 +199,7 @@ def check_dataset():
     )
 
     if not class_directories:
+
         raise ValueError(
             "لم يتم العثور على مجلدات الفئات داخل Dataset."
         )
@@ -156,31 +220,39 @@ def check_dataset():
         count = sum(
             1
             for file in class_dir.rglob("*")
-            if file.is_file()
-            and file.suffix.lower() in valid_extensions
+            if (
+                file.is_file()
+                and file.suffix.lower()
+                in valid_extensions
+            )
         )
 
         total_images += count
 
         print(
-            f"{class_dir.name:<30}: {count:>4} images"
+            f"{class_dir.name:<30}: "
+            f"{count:>4} images"
         )
 
-    print(f"\nTotal images: {total_images}")
+    print(
+        f"\nTotal images: {total_images}"
+    )
 
     if total_images == 0:
+
         raise ValueError(
             "لم يتم العثور على صور داخل Dataset."
         )
 
     print("\nSUCCESS:")
+
     print(
         f"تم العثور على {total_images} صورة كاملة."
     )
 
 
 # ============================================================
-# 5. جمع مسارات الصور
+# 4. جمع مسارات الصور
 # ============================================================
 
 def collect_image_paths():
@@ -199,7 +271,6 @@ def collect_image_paths():
         ".webp",
     }
 
-    # ترتيب الفئات أبجديًا حتى يكون الترميز ثابتًا
     class_names = sorted(
         [
             folder.name
@@ -208,19 +279,21 @@ def collect_image_paths():
         ]
     )
 
-    # تحويل اسم الفئة إلى رقم
     class_to_index = {
         class_name: index
-        for index, class_name in enumerate(class_names)
+        for index, class_name
+        in enumerate(class_names)
     }
 
     image_paths = []
+
     labels = []
 
-    # جمع الصور
     for class_name in class_names:
 
-        class_directory = DATASET_DIR / class_name
+        class_directory = (
+            DATASET_DIR / class_name
+        )
 
         for image_path in sorted(
             class_directory.rglob("*")
@@ -232,26 +305,40 @@ def collect_image_paths():
                 in valid_extensions
             ):
 
-                image_paths.append(str(image_path))
-
-                labels.append(
-                    class_to_index[class_name]
+                image_paths.append(
+                    str(image_path)
                 )
 
-    image_paths = np.array(image_paths)
-    labels = np.array(labels, dtype=np.int32)
+                labels.append(
+                    class_to_index[
+                        class_name
+                    ]
+                )
 
-    print(f"\nTotal image paths: {len(image_paths)}")
+    image_paths = np.array(
+        image_paths
+    )
+
+    labels = np.array(
+        labels,
+        dtype=np.int32
+    )
+
+    print(
+        f"\nTotal image paths: "
+        f"{len(image_paths)}"
+    )
 
     print("\nClass mapping:")
 
-    for class_name, index in class_to_index.items():
+    for class_name, index in (
+        class_to_index.items()
+    ):
 
         print(
             f"{index} -> {class_name}"
         )
 
-    # حفظ أسماء الفئات
     with open(
         CLASS_NAMES_PATH,
         "w",
@@ -265,85 +352,103 @@ def collect_image_paths():
             indent=4
         )
 
-    print("\nClass names saved to:")
-    print(CLASS_NAMES_PATH)
+    print(
+        "\nClass names saved to:"
+    )
 
-    return image_paths, labels, class_names
+    print(
+        CLASS_NAMES_PATH
+    )
+
+    return (
+        image_paths,
+        labels,
+        class_names
+    )
 
 
 # ============================================================
-# 6. تقسيم Dataset
+# 5. تقسيم Dataset
 # ============================================================
 
-def split_dataset(image_paths, labels, class_names):
+def split_dataset(
+    image_paths,
+    labels,
+    class_names
+):
     """
     تقسيم الصور إلى:
     70% Training
     15% Validation
     15% Test
-
-    باستخدام Stratified Split حتى نحافظ على توزيع الفئات.
     """
 
     print("=" * 70)
     print("SPLITTING DATASET")
     print("=" * 70)
 
-    # أولًا نفصل 30% مؤقتة
-    train_paths, temp_paths, train_labels, temp_labels = (
-        train_test_split(
-            image_paths,
-            labels,
-            test_size=(
-                TEST_SPLIT + VALIDATION_SPLIT
-            ),
-            stratify=labels,
-            random_state=SEED,
-        )
+    (
+        train_paths,
+        temp_paths,
+        train_labels,
+        temp_labels
+    ) = train_test_split(
+        image_paths,
+        labels,
+        test_size=(
+            TEST_SPLIT
+            + VALIDATION_SPLIT
+        ),
+        stratify=labels,
+        random_state=SEED,
     )
 
-    # النصف من الـ30% سيكون Validation
-    # والنصف الآخر Test
     test_ratio_inside_temp = (
         TEST_SPLIT
-        / (TEST_SPLIT + VALIDATION_SPLIT)
-    )
-
-    val_paths, test_paths, val_labels, test_labels = (
-        train_test_split(
-            temp_paths,
-            temp_labels,
-            test_size=test_ratio_inside_temp,
-            stratify=temp_labels,
-            random_state=SEED,
+        / (
+            TEST_SPLIT
+            + VALIDATION_SPLIT
         )
     )
 
-    print(
-        f"\nTraining images: {len(train_paths)}"
+    (
+        val_paths,
+        test_paths,
+        val_labels,
+        test_labels
+    ) = train_test_split(
+        temp_paths,
+        temp_labels,
+        test_size=test_ratio_inside_temp,
+        stratify=temp_labels,
+        random_state=SEED,
     )
 
     print(
-        f"Validation images: {len(val_paths)}"
+        f"\nTraining images: "
+        f"{len(train_paths)}"
     )
 
     print(
-        f"Test images: {len(test_paths)}"
+        f"Validation images: "
+        f"{len(val_paths)}"
+    )
+
+    print(
+        f"Test images: "
+        f"{len(test_paths)}"
     )
 
     print(
         f"\nTotal: {len(image_paths)}"
     )
 
-    # --------------------------------------------------------
-    # إنشاء ملخص للتقسيم
-    # --------------------------------------------------------
-
     split_rows = []
 
-    for class_index, class_name in enumerate(
-        class_names
-    ):
+    for (
+        class_index,
+        class_name
+    ) in enumerate(class_names):
 
         train_count = np.sum(
             train_labels == class_index
@@ -360,9 +465,15 @@ def split_dataset(image_paths, labels, class_names):
         split_rows.append(
             {
                 "class_name": class_name,
-                "train": int(train_count),
-                "validation": int(val_count),
-                "test": int(test_count),
+                "train": int(
+                    train_count
+                ),
+                "validation": int(
+                    val_count
+                ),
+                "test": int(
+                    test_count
+                ),
                 "total": int(
                     train_count
                     + val_count
@@ -371,7 +482,9 @@ def split_dataset(image_paths, labels, class_names):
             }
         )
 
-    split_df = pd.DataFrame(split_rows)
+    split_df = pd.DataFrame(
+        split_rows
+    )
 
     split_df.to_csv(
         SPLIT_SUMMARY_PATH,
@@ -379,8 +492,13 @@ def split_dataset(image_paths, labels, class_names):
         encoding="utf-8-sig",
     )
 
-    print("\nDataset split summary saved to:")
-    print(SPLIT_SUMMARY_PATH)
+    print(
+        "\nDataset split summary saved to:"
+    )
+
+    print(
+        SPLIT_SUMMARY_PATH
+    )
 
     return (
         train_paths,
@@ -393,15 +511,23 @@ def split_dataset(image_paths, labels, class_names):
 
 
 # ============================================================
-# 7. قراءة الصور وتحضير TensorFlow Dataset
+# 6. قراءة الصور
 # ============================================================
 
-def load_image(image_path, label):
+def load_image(
+    image_path,
+    label
+):
     """
-    قراءة الصورة وتحويلها إلى RGB ثم تغيير حجمها.
+    قراءة الصورة وتحويلها إلى RGB
+    ثم تغيير حجمها.
     """
 
-    image = tf.io.read_file(image_path)
+    tf = get_tensorflow()
+
+    image = tf.io.read_file(
+        image_path
+    )
 
     image = tf.image.decode_image(
         image,
@@ -430,6 +556,10 @@ def load_image(image_path, label):
     return image, label
 
 
+# ============================================================
+# 7. إنشاء TensorFlow Dataset
+# ============================================================
+
 def create_dataset(
     image_paths,
     labels,
@@ -439,14 +569,19 @@ def create_dataset(
     إنشاء tf.data.Dataset بكفاءة.
     """
 
-    dataset = tf.data.Dataset.from_tensor_slices(
-        (
-            image_paths,
-            labels,
+    tf = get_tensorflow()
+
+    AUTOTUNE = tf.data.AUTOTUNE
+
+    dataset = (
+        tf.data.Dataset.from_tensor_slices(
+            (
+                image_paths,
+                labels,
+            )
         )
     )
 
-    # Shuffle فقط لبيانات التدريب
     if training:
 
         dataset = dataset.shuffle(
@@ -475,12 +610,16 @@ def create_dataset(
 # 8. حساب Class Weights
 # ============================================================
 
-def calculate_class_weights(train_labels):
+def calculate_class_weights(
+    train_labels
+):
     """
     حساب أوزان الفئات لمعالجة عدم توازن Dataset.
     """
 
-    classes = np.unique(train_labels)
+    classes = np.unique(
+        train_labels
+    )
 
     weights = compute_class_weight(
         class_weight="balanced",
@@ -490,17 +629,18 @@ def calculate_class_weights(train_labels):
 
     class_weights = {
         int(class_id): float(weight)
-        for class_id, weight in zip(
-            classes,
-            weights
-        )
+        for class_id, weight
+        in zip(classes, weights)
     }
 
     print("=" * 70)
     print("CLASS WEIGHTS")
     print("=" * 70)
 
-    for class_id, weight in class_weights.items():
+    for (
+        class_id,
+        weight
+    ) in class_weights.items():
 
         print(
             f"{class_id}: {weight:.4f}"
@@ -513,66 +653,61 @@ def calculate_class_weights(train_labels):
 # 9. بناء نموذج MobileNetV2
 # ============================================================
 
-def build_model(num_classes):
+def build_model(
+    num_classes
+):
     """
-    بناء نموذج MobileNetV2 باستخدام Transfer Learning.
+    بناء نموذج MobileNetV2
+    باستخدام Transfer Learning.
     """
+
+    tf = get_tensorflow()
 
     print("=" * 70)
     print("BUILDING MOBILENETV2 MODEL")
     print("=" * 70)
 
-    # --------------------------------------------------------
-    # Data Augmentation
-    # --------------------------------------------------------
+    data_augmentation = (
+        tf.keras.Sequential(
+            [
+                tf.keras.layers.RandomFlip(
+                    "horizontal"
+                ),
 
-    data_augmentation = tf.keras.Sequential(
-        [
-            tf.keras.layers.RandomFlip(
-                "horizontal"
-            ),
+                tf.keras.layers.RandomRotation(
+                    0.15
+                ),
 
-            tf.keras.layers.RandomRotation(
-                0.15
-            ),
+                tf.keras.layers.RandomZoom(
+                    0.15
+                ),
 
-            tf.keras.layers.RandomZoom(
-                0.15
-            ),
+                tf.keras.layers.RandomContrast(
+                    0.15
+                ),
 
-            tf.keras.layers.RandomContrast(
-                0.15
-            ),
-
-            tf.keras.layers.RandomTranslation(
-                height_factor=0.05,
-                width_factor=0.05,
-            ),
-        ],
-        name="data_augmentation",
+                tf.keras.layers.RandomTranslation(
+                    height_factor=0.05,
+                    width_factor=0.05,
+                ),
+            ],
+            name="data_augmentation",
+        )
     )
 
-    # --------------------------------------------------------
-    # MobileNetV2
-    # --------------------------------------------------------
-
-    base_model = tf.keras.applications.MobileNetV2(
-        input_shape=(
-            IMG_SIZE[0],
-            IMG_SIZE[1],
-            3,
-        ),
-        include_top=False,
-        weights="imagenet",
+    base_model = (
+        tf.keras.applications.MobileNetV2(
+            input_shape=(
+                IMG_SIZE[0],
+                IMG_SIZE[1],
+                3,
+            ),
+            include_top=False,
+            weights="imagenet",
+        )
     )
 
-    # المرحلة الأولى:
-    # تجميد MobileNetV2 بالكامل
     base_model.trainable = False
-
-    # --------------------------------------------------------
-    # Input
-    # --------------------------------------------------------
 
     inputs = tf.keras.Input(
         shape=(
@@ -583,29 +718,30 @@ def build_model(num_classes):
         name="input_image",
     )
 
-    # Augmentation
-    x = data_augmentation(inputs)
-
-    # MobileNetV2 preprocessing
-    x = tf.keras.applications.mobilenet_v2.preprocess_input(
-        x
+    x = data_augmentation(
+        inputs
     )
 
-    # Base model
+    x = (
+        tf.keras.applications
+        .mobilenet_v2
+        .preprocess_input(x)
+    )
+
     x = base_model(
         x,
         training=False,
     )
 
-    # تقليل أبعاد الـFeature Maps
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    x = (
+        tf.keras.layers
+        .GlobalAveragePooling2D()(x)
+    )
 
-    # Dropout لتقليل Overfitting
     x = tf.keras.layers.Dropout(
         0.35
     )(x)
 
-    # طبقة التصنيف
     outputs = tf.keras.layers.Dense(
         num_classes,
         activation="softmax",
@@ -617,7 +753,6 @@ def build_model(num_classes):
         outputs,
     )
 
-    # Learning rate أولي
     model.compile(
         optimizer=tf.keras.optimizers.Adam(
             learning_rate=1e-4
@@ -630,11 +765,16 @@ def build_model(num_classes):
         ],
     )
 
-    print("\nInitial model summary:")
+    print(
+        "\nInitial model summary:"
+    )
 
     model.summary()
 
-    return model, base_model
+    return (
+        model,
+        base_model
+    )
 
 
 # ============================================================
@@ -643,9 +783,10 @@ def build_model(num_classes):
 
 def create_callbacks():
     """
-    إنشاء Callbacks لحفظ أفضل نموذج وإيقاف التدريب
-    عندما لا يتحسن الأداء.
+    إنشاء Callbacks لحفظ أفضل نموذج.
     """
+
+    tf = get_tensorflow()
 
     checkpoint = (
         tf.keras.callbacks.ModelCheckpoint(
@@ -724,31 +865,26 @@ def train_initial_stage(
 
 def enable_fine_tuning(
     model,
-    base_model,
+    base_model
 ):
     """
     فتح آخر طبقات MobileNetV2 للتدريب الدقيق.
-
-    لا نفتح كل الطبقات حتى لا نخسر المعرفة
-    التي تعلمها MobileNetV2 من ImageNet.
     """
+
+    tf = get_tensorflow()
 
     print("=" * 70)
     print("STAGE 2 - FINE-TUNING MOBILENETV2")
     print("=" * 70)
 
-    # السماح بتدريب الـBase Model
     base_model.trainable = True
 
-    # تجميد معظم الطبقات
     for layer in base_model.layers[
         :-FINE_TUNE_LAST_LAYERS
     ]:
 
         layer.trainable = False
 
-    # Batch Normalization layers
-    # نتركها مجمدة لثبات التدريب
     for layer in base_model.layers:
 
         if isinstance(
@@ -758,7 +894,6 @@ def enable_fine_tuning(
 
             layer.trainable = False
 
-    # Learning rate صغير جدًا في Fine-Tuning
     model.compile(
         optimizer=tf.keras.optimizers.Adam(
             learning_rate=1e-5
@@ -784,6 +919,10 @@ def enable_fine_tuning(
 
     return model
 
+
+# ============================================================
+# 13. Fine-Tuning Training
+# ============================================================
 
 def train_fine_tuning(
     model,
@@ -812,7 +951,6 @@ def train_fine_tuning(
         verbose=1,
     )
 
-    # دمج تاريخ التدريب في مرحلتي التدريب
     combined_history = {}
 
     for key in initial_history.history:
@@ -829,15 +967,19 @@ def train_fine_tuning(
 
 
 # ============================================================
-# 13. حفظ Training History
+# 14. حفظ Training History
 # ============================================================
 
-def save_training_history(history):
+def save_training_history(
+    history
+):
     """
     حفظ نتائج كل Epoch في CSV.
     """
 
-    history_df = pd.DataFrame(history)
+    history_df = pd.DataFrame(
+        history
+    )
 
     history_df.insert(
         0,
@@ -858,19 +1000,25 @@ def save_training_history(history):
         "\nTraining history saved to:"
     )
 
-    print(HISTORY_PATH)
+    print(
+        HISTORY_PATH
+    )
 
     return history_df
 
 
 # ============================================================
-# 14. إنشاء Training Plots
+# 15. Training Plots
 # ============================================================
 
-def create_training_plots(history):
+def create_training_plots(
+    history
+):
     """
     إنشاء رسومات Accuracy و Loss.
     """
+
+    import matplotlib.pyplot as plt
 
     print("=" * 70)
     print("CREATING TRAINING PLOTS")
@@ -881,10 +1029,7 @@ def create_training_plots(history):
         len(history["accuracy"]) + 1,
     )
 
-    # --------------------------------------------------------
     # Accuracy
-    # --------------------------------------------------------
-
     plt.figure(
         figsize=(10, 6)
     )
@@ -934,10 +1079,7 @@ def create_training_plots(history):
 
     plt.close()
 
-    # --------------------------------------------------------
     # Loss
-    # --------------------------------------------------------
-
     plt.figure(
         figsize=(10, 6)
     )
@@ -993,7 +1135,7 @@ def create_training_plots(history):
 
 
 # ============================================================
-# 15. تقييم النموذج
+# 16. تقييم النموذج
 # ============================================================
 
 def evaluate_model(
@@ -1003,28 +1145,25 @@ def evaluate_model(
     class_names,
 ):
     """
-    تقييم النموذج على Test Set المستقلة.
+    تقييم النموذج على Test Set مستقلة.
     """
+
+    import matplotlib.pyplot as plt
+    import seaborn as sns
 
     print("=" * 70)
     print("EVALUATING IMAGE MODEL")
     print("=" * 70)
 
-    # الحصول على الاحتمالات
     probabilities = model.predict(
         test_dataset,
         verbose=1,
     )
 
-    # اختيار الفئة ذات أعلى احتمال
     predictions = np.argmax(
         probabilities,
         axis=1,
     )
-
-    # --------------------------------------------------------
-    # Metrics
-    # --------------------------------------------------------
 
     accuracy = accuracy_score(
         test_labels,
@@ -1070,10 +1209,6 @@ def evaluate_model(
         f"F1 Score : {f1:.4f}"
     )
 
-    # --------------------------------------------------------
-    # Classification Report
-    # --------------------------------------------------------
-
     report = classification_report(
         test_labels,
         predictions,
@@ -1109,10 +1244,6 @@ def evaluate_model(
             zero_division=0,
         )
     )
-
-    # --------------------------------------------------------
-    # Confusion Matrix
-    # --------------------------------------------------------
 
     cm = confusion_matrix(
         test_labels,
@@ -1167,10 +1298,6 @@ def evaluate_model(
         "\nConfusion Matrix saved successfully."
     )
 
-    # --------------------------------------------------------
-    # حفظ Metrics
-    # --------------------------------------------------------
-
     metrics_df = pd.DataFrame(
         [
             {
@@ -1197,10 +1324,12 @@ def evaluate_model(
 
 
 # ============================================================
-# 16. حفظ النموذج النهائي
+# 17. حفظ النموذج
 # ============================================================
 
-def save_model(model):
+def save_model(
+    model
+):
     """
     حفظ النموذج النهائي.
     """
@@ -1219,31 +1348,51 @@ def save_model(model):
 
 
 # ============================================================
-# 17. Prediction لصورة واحدة
+# 18. Prediction لصورة واحدة
 # ============================================================
 
-def predict_image(image_path):
+def predict_image(
+    image_path
+):
     """
-    تصنيف صورة واحدة باستخدام النموذج المدرب.
+    تصنيف صورة واحدة.
 
-    هذه الدالة سيتم استخدامها لاحقًا داخل FastAPI وStreamlit.
+    TensorFlow والنموذج يتم تحميلهما
+    فقط عند استدعاء هذه الدالة.
     """
+
+    # TensorFlow لا يتم تحميله إلا هنا
+    tf = get_tensorflow()
 
     image_path = Path(
         image_path
     )
 
     if not image_path.exists():
+
         raise FileNotFoundError(
-            f"الصورة غير موجودة:\n{image_path}"
+            f"الصورة غير موجودة:\n"
+            f"{image_path}"
         )
 
+    # --------------------------------------------------------
     # تحميل النموذج
+    # --------------------------------------------------------
+
     model = tf.keras.models.load_model(
         MODEL_PATH
     )
 
+    # --------------------------------------------------------
     # قراءة أسماء الفئات
+    # --------------------------------------------------------
+
+    if not CLASS_NAMES_PATH.exists():
+
+        raise FileNotFoundError(
+            "ملف أسماء الفئات غير موجود."
+        )
+
     with open(
         CLASS_NAMES_PATH,
         "r",
@@ -1254,7 +1403,10 @@ def predict_image(image_path):
             file
         )
 
+    # --------------------------------------------------------
     # قراءة الصورة
+    # --------------------------------------------------------
+
     image = tf.io.read_file(
         str(image_path)
     )
@@ -1283,32 +1435,42 @@ def predict_image(image_path):
         tf.float32,
     )
 
-    # إضافة Batch dimension
     image = tf.expand_dims(
         image,
         axis=0,
     )
 
-    # النموذج يحتوي داخله على preprocessing
+    # --------------------------------------------------------
+    # Prediction
+    # --------------------------------------------------------
+
     probabilities = model.predict(
         image,
         verbose=0,
     )[0]
 
     predicted_index = int(
-        np.argmax(probabilities)
+        np.argmax(
+            probabilities
+        )
     )
 
     predicted_class = (
-        class_names[predicted_index]
+        class_names[
+            predicted_index
+        ]
     )
 
     confidence = float(
-        probabilities[predicted_index]
+        probabilities[
+            predicted_index
+        ]
     )
 
     return {
-        "predicted_class": predicted_class,
+        "predicted_class": (
+            predicted_class
+        ),
         "confidence": confidence,
         "confidence_percentage": (
             confidence * 100
@@ -1317,7 +1479,7 @@ def predict_image(image_path):
 
 
 # ============================================================
-# 18. Main
+# 19. Main
 # ============================================================
 
 def main():
@@ -1326,25 +1488,13 @@ def main():
     print("SMARTSTOCK AI - IMAGE AI")
     print("=" * 70)
 
-    # --------------------------------------------------------
-    # فحص Dataset
-    # --------------------------------------------------------
-
     check_dataset()
-
-    # --------------------------------------------------------
-    # جمع الصور
-    # --------------------------------------------------------
 
     (
         image_paths,
         labels,
         class_names,
     ) = collect_image_paths()
-
-    # --------------------------------------------------------
-    # تقسيم Dataset
-    # --------------------------------------------------------
 
     (
         train_paths,
@@ -1358,10 +1508,6 @@ def main():
         labels,
         class_names,
     )
-
-    # --------------------------------------------------------
-    # إنشاء TensorFlow datasets
-    # --------------------------------------------------------
 
     print("=" * 70)
     print("PREPARING TENSORFLOW DATASETS")
@@ -1385,25 +1531,15 @@ def main():
         training=False,
     )
 
-    # --------------------------------------------------------
-    # Class Weights
-    # --------------------------------------------------------
-
     class_weights = calculate_class_weights(
         train_labels
     )
 
-    # --------------------------------------------------------
-    # بناء النموذج
-    # --------------------------------------------------------
-
     model, base_model = build_model(
-        num_classes=len(class_names)
+        num_classes=len(
+            class_names
+        )
     )
-
-    # --------------------------------------------------------
-    # المرحلة الأولى
-    # --------------------------------------------------------
 
     initial_history = train_initial_stage(
         model,
@@ -1411,10 +1547,6 @@ def main():
         validation_dataset,
         class_weights,
     )
-
-    # --------------------------------------------------------
-    # Fine-Tuning
-    # --------------------------------------------------------
 
     model = enable_fine_tuning(
         model,
@@ -1429,25 +1561,13 @@ def main():
         initial_history,
     )
 
-    # --------------------------------------------------------
-    # حفظ History
-    # --------------------------------------------------------
-
     save_training_history(
         combined_history
     )
 
-    # --------------------------------------------------------
-    # إنشاء الرسومات
-    # --------------------------------------------------------
-
     create_training_plots(
         combined_history
     )
-
-    # --------------------------------------------------------
-    # تحميل أفضل نموذج
-    # --------------------------------------------------------
 
     if BEST_MODEL_PATH.exists():
 
@@ -1455,13 +1575,11 @@ def main():
         print("LOADING BEST VALIDATION MODEL")
         print("=" * 70)
 
+        tf = get_tensorflow()
+
         model = tf.keras.models.load_model(
             BEST_MODEL_PATH
         )
-
-    # --------------------------------------------------------
-    # التقييم النهائي
-    # --------------------------------------------------------
 
     metrics = evaluate_model(
         model,
@@ -1470,17 +1588,9 @@ def main():
         class_names,
     )
 
-    # --------------------------------------------------------
-    # حفظ النموذج
-    # --------------------------------------------------------
-
     save_model(
         model
     )
-
-    # --------------------------------------------------------
-    # النتيجة النهائية
-    # --------------------------------------------------------
 
     print("\n")
     print("=" * 70)
@@ -1488,19 +1598,23 @@ def main():
     print("=" * 70)
 
     print(
-        f"Accuracy : {metrics['accuracy']:.4f}"
+        f"Accuracy : "
+        f"{metrics['accuracy']:.4f}"
     )
 
     print(
-        f"Precision: {metrics['precision']:.4f}"
+        f"Precision: "
+        f"{metrics['precision']:.4f}"
     )
 
     print(
-        f"Recall   : {metrics['recall']:.4f}"
+        f"Recall   : "
+        f"{metrics['recall']:.4f}"
     )
 
     print(
-        f"F1 Score : {metrics['f1_score']:.4f}"
+        f"F1 Score : "
+        f"{metrics['f1_score']:.4f}"
     )
 
     print("\nModel:")
@@ -1525,5 +1639,5 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
-    main()
 
+    main()
