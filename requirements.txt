@@ -1,0 +1,14 @@
+﻿fastapi
+uvicorn[standard]
+pandas
+numpy
+scikit-learn
+requests
+python-dotenv
+squareup
+tensorflow
+joblib
+pydantic
+streamlit
+plotly
+Pillow
