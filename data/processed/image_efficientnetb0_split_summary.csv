@@ -1,0 +1,4 @@
+split,number_of_images
+train,3326
+validation,713
+test,713
