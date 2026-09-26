@@ -12,3 +12,5 @@ pydantic
 streamlit
 plotly
 Pillow
+
+torch==2.14.0
