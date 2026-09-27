@@ -1,49 +1,26 @@
 # ============================================================
-# SmartStock AI
-# FastAPI Central Backend
-# ============================================================
-#
-# هذا الملف هو الواجهة الخلفية الرئيسية للمشروع.
-#
-# الوظائف التي يوفرها:
-# 1. فحص حالة النظام
-# 2. جلب المبيعات من Square
-# 3. جلب المخزون من Square
-# 4. تحليل مخاطر المخزون ومدة الصلاحية
-# 5. التنبؤ بالطلب باستخدام Random Forest
-# 6. معلومات نموذج تصنيف الصور MobileNetV2
-# 7. تصنيف صورة مرفوعة من المستخدم
-# 8. Transformer Chatbot
-# 9. ملخص Dashboard
-#
-# تم استخدام Lazy Loading لنماذج الذكاء الاصطناعي
-# لتقليل استهلاك الذاكرة عند تشغيل FastAPI.
-# ============================================================
-
-
-# ============================================================
-# 1. استيراد المكتبات الأساسية
+# SMARTSTOCK AI - FastAPI Backend
 # ============================================================
 
 from pathlib import Path
-import uuid
 import json
+import os
+import traceback
 
 import pandas as pd
 
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from integrations.square.square_client import SquareClient
+from square.client import SquareClient
 
 
 # ============================================================
-# 2. إعداد مسارات المشروع
+# 1. إعداد مسارات المشروع
 # ============================================================
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
 
 RISK_DATA_PATH = (
     PROJECT_ROOT
@@ -52,13 +29,11 @@ RISK_DATA_PATH = (
     / "inventory_expiry_risk_analysis.csv"
 )
 
-
 DEMAND_RESULTS_PATH = (
     PROJECT_ROOT
     / "models"
     / "demand_model_results.csv"
 )
-
 
 IMAGE_CLASSES_PATH = (
     PROJECT_ROOT
@@ -66,13 +41,11 @@ IMAGE_CLASSES_PATH = (
     / "image_class_names.json"
 )
 
-
 UPLOAD_DIR = (
     PROJECT_ROOT
     / "data"
     / "uploads"
 )
-
 
 UPLOAD_DIR.mkdir(
     parents=True,
@@ -81,21 +54,21 @@ UPLOAD_DIR.mkdir(
 
 
 # ============================================================
-# 3. إنشاء FastAPI Application
+# 2. إنشاء FastAPI
 # ============================================================
 
 app = FastAPI(
-    title="SmartStock AI API",
+    title="SMARTSTOCK AI API",
     description=(
-        "Central Backend API for SmartStock AI - "
-        "Intelligent Inventory, Demand and Waste Management Platform"
+        "Integrated AI Inventory Management Platform "
+        "for clothing, makeup, restaurants and cafes."
     ),
     version="1.0.0"
 )
 
 
 # ============================================================
-# 4. إعداد CORS
+# 3. CORS
 # ============================================================
 
 app.add_middleware(
@@ -103,34 +76,77 @@ app.add_middleware(
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
+
+
+# ============================================================
+# 4. Square Configuration
+# ============================================================
+
+try:
+
+    from config.settings import SQUARE_ACCESS_TOKEN
+
+except Exception:
+
+    SQUARE_ACCESS_TOKEN = os.getenv(
+        "SQUARE_ACCESS_TOKEN"
+    )
+
+
+try:
+
+    from config.settings import SQUARE_ENVIRONMENT
+
+except Exception:
+
+    SQUARE_ENVIRONMENT = os.getenv(
+        "SQUARE_ENVIRONMENT",
+        "sandbox"
+    )
 
 
 # ============================================================
 # 5. إنشاء Square Client
 # ============================================================
 
+square_client = None
+
 try:
 
-    square_client = SquareClient()
+    if SQUARE_ACCESS_TOKEN:
+
+        square_client = SquareClient(
+            token=SQUARE_ACCESS_TOKEN
+        )
+
+        print(
+            "Square client initialized successfully."
+        )
+
+    else:
+
+        print(
+            "WARNING: SQUARE_ACCESS_TOKEN is not configured."
+        )
 
 except Exception as e:
 
     print(
-        "Warning: Could not initialize SquareClient."
+        "WARNING: Could not initialize Square client."
     )
 
     print(
         "Error:",
-        e
+        str(e)
     )
 
     square_client = None
 
 
 # ============================================================
-# 6. Lazy Loading لنموذج التنبؤ بالطلب
+# 6. Demand Model - Lazy Loading
 # ============================================================
 
 demand_model = None
@@ -140,58 +156,174 @@ def get_demand_model():
     """
     تحميل نموذج التنبؤ بالطلب عند الحاجة فقط.
 
-    بهذه الطريقة لا يتم تحميل نموذج Random Forest
-    عند تشغيل FastAPI، وإنما فقط عندما يطلب المستخدم
-    endpoint الخاص بالتنبؤ.
+    يتم تسجيل جميع تفاصيل الخطأ في Render Logs
+    حتى نستطيع معرفة سبب فشل تحميل النموذج.
     """
 
     global demand_model
 
-    if demand_model is None:
+    # --------------------------------------------------------
+    # إذا كان النموذج محملاً مسبقاً
+    # --------------------------------------------------------
 
-        try:
+    if demand_model is not None:
 
-            # يتم استيراد النموذج عند الحاجة فقط
-            from services.demand_model import DemandModel
+        return demand_model
 
-            demand_model = DemandModel()
+    # --------------------------------------------------------
+    # بداية تحميل النموذج
+    # --------------------------------------------------------
 
-            print(
-                "DemandModel loaded successfully."
+    print("=" * 60)
+
+    print(
+        "STARTING DEMAND MODEL LOADING"
+    )
+
+    print("=" * 60)
+
+    try:
+
+        # ----------------------------------------------------
+        # استيراد DemandModel
+        # ----------------------------------------------------
+
+        print(
+            "Importing DemandModel..."
+        )
+
+        from services.demand_model import DemandModel
+
+        print(
+            "DemandModel import: SUCCESS"
+        )
+
+        # ----------------------------------------------------
+        # إنشاء الكائن
+        # ----------------------------------------------------
+
+        print(
+            "Creating DemandModel object..."
+        )
+
+        demand_model = DemandModel()
+
+        print(
+            "DemandModel object created successfully."
+        )
+
+        print(
+            "DemandModel type:",
+            type(demand_model)
+        )
+
+        # ----------------------------------------------------
+        # معرفة مسار النموذج
+        # ----------------------------------------------------
+
+        model_path = getattr(
+            demand_model,
+            "model_path",
+            None
+        )
+
+        print(
+            "Demand model path:",
+            model_path
+        )
+
+        # ----------------------------------------------------
+        # التحقق من وجود ملف النموذج
+        # ----------------------------------------------------
+
+        if model_path is not None:
+
+            model_file = Path(
+                model_path
             )
 
-        except Exception as e:
-
             print(
-                "Warning: Could not initialize DemandModel."
+                "Model file exists:",
+                model_file.exists()
             )
 
             print(
-                "Error:",
-                e
+                "Model file:",
+                model_file
             )
 
-            return None
+            if model_file.exists():
 
-    return demand_model
+                try:
+
+                    print(
+                        "Model file size:",
+                        model_file.stat().st_size,
+                        "bytes"
+                    )
+
+                except Exception:
+
+                    pass
+
+        # ----------------------------------------------------
+        # ملاحظة:
+        # joblib.load() يتم تنفيذه لاحقاً داخل predict()
+        # ----------------------------------------------------
+
+        print(
+            "DemandModel initialized successfully."
+        )
+
+        print("=" * 60)
+
+        return demand_model
+
+    except Exception as e:
+
+        print("=" * 60)
+
+        print(
+            "DEMAND MODEL INITIALIZATION ERROR"
+        )
+
+        print("=" * 60)
+
+        print(
+            "Error type:",
+            type(e).__name__
+        )
+
+        print(
+            "Error:",
+            str(e)
+        )
+
+        print(
+            "Full traceback:"
+        )
+
+        traceback.print_exc()
+
+        print("=" * 60)
+
+        demand_model = None
+
+        return None
 
 
 # ============================================================
-# 7. إعداد Square Location
+# 7. Square Location
 # ============================================================
 
 LOCATION_ID = "LCQJDMZ076NK1"
 
 
 # ============================================================
-# 8. نماذج البيانات Pydantic
+# 8. Pydantic Models
 # ============================================================
 
-
 class DemandRequest(BaseModel):
-    """
-    البيانات المطلوبة للتنبؤ بالطلب.
-    """
 
     store_id: int
 
@@ -201,40 +333,30 @@ class DemandRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """
-    السؤال الذي يرسله المستخدم إلى Chatbot.
-    """
 
-    question: str
+    message: str
+
+
+class InventoryRequest(BaseModel):
+
+    catalog_object_id: str
+
+    quantity: float
 
 
 # ============================================================
-# 9. الصفحة الرئيسية
+# 9. Root Endpoint
 # ============================================================
 
 @app.get("/")
 def root():
 
     return {
-
         "success": True,
-
-        "project":
-            "SmartStock AI",
-
-        "description": (
-            "Intelligent Inventory, Demand and "
-            "Waste Management Platform"
-        ),
-
-        "api":
-            "FastAPI",
-
-        "status":
-            "running",
-
-        "docs":
-            "/docs"
+        "message": "SMARTSTOCK AI API is running.",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/health"
     }
 
 
@@ -243,19 +365,11 @@ def root():
 # ============================================================
 
 @app.get("/health")
-def health_check():
-    """
-    فحص حالة المكونات الرئيسية للنظام.
-
-    ملاحظة:
-    demand_model يكون False عند بداية التشغيل بشكل طبيعي،
-    لأنه يتم تحميله فقط عند أول طلب للتنبؤ.
-    """
+def health():
 
     return {
 
-        "status":
-            "healthy",
+        "status": "healthy",
 
         "square_client":
             square_client is not None,
@@ -269,469 +383,237 @@ def health_check():
 
 
 # ============================================================
-# 11. جلب المبيعات من Square
-# ============================================================
-
-@app.get("/sales")
-def get_sales():
-
-    try:
-
-        if square_client is None:
-
-            return {
-
-                "success":
-                    False,
-
-                "error":
-                    "Square client is not available."
-            }
-
-
-        result = square_client.get_orders(
-            location_id=LOCATION_ID
-        )
-
-
-        return {
-
-            "success":
-                True,
-
-            "source":
-                "Square Sandbox",
-
-            "data":
-                result
-        }
-
-
-    except Exception as e:
-
-        return {
-
-            "success":
-                False,
-
-            "error":
-                str(e)
-        }
-
-
-# ============================================================
-# 12. جلب المخزون من Square
-# ============================================================
-
-@app.get("/inventory")
-def get_inventory():
-
-    try:
-
-        if square_client is None:
-
-            return {
-
-                "success":
-                    False,
-
-                "error":
-                    "Square client is not available."
-            }
-
-
-        inventory_counts = (
-            square_client.get_inventory_count(
-                catalog_object_id=None,
-                location_id=LOCATION_ID
-            )
-        )
-
-
-        if inventory_counts is None:
-
-            inventory_counts = []
-
-
-        inventory_data = []
-
-
-        for count in inventory_counts:
-
-            try:
-
-                quantity = float(
-                    count.get(
-                        "quantity",
-                        0
-                    )
-                )
-
-            except (
-                TypeError,
-                ValueError
-            ):
-
-                quantity = 0.0
-
-
-            inventory_data.append({
-
-                "catalog_object_id":
-                    count.get(
-                        "catalog_object_id"
-                    ),
-
-                "catalog_object_type":
-                    count.get(
-                        "catalog_object_type"
-                    ),
-
-                "location_id":
-                    count.get(
-                        "location_id"
-                    ),
-
-                "state":
-                    count.get(
-                        "state"
-                    ),
-
-                "quantity":
-                    quantity,
-
-                "calculated_at":
-                    count.get(
-                        "calculated_at"
-                    )
-            })
-
-
-        return {
-
-            "success":
-                True,
-
-            "source":
-                "Square Sandbox",
-
-            "location_id":
-                LOCATION_ID,
-
-            "total_items":
-                len(inventory_data),
-
-            "data":
-                inventory_data
-        }
-
-
-    except Exception as e:
-
-        return {
-
-            "success":
-                False,
-
-            "error":
-                str(e)
-        }
-
-
-# ============================================================
-# 13. جلب تحليل مخاطر المخزون
-# ============================================================
-
-@app.get("/inventory/risk")
-def get_inventory_risk():
-
-    try:
-
-        if not RISK_DATA_PATH.exists():
-
-            return {
-
-                "success":
-                    False,
-
-                "error": (
-                    "Risk analysis file was not found: "
-                    f"{RISK_DATA_PATH}"
-                )
-            }
-
-
-        df = pd.read_csv(
-            RISK_DATA_PATH
-        )
-
-
-        df = df.where(
-            pd.notnull(df),
-            None
-        )
-
-
-        return {
-
-            "success":
-                True,
-
-            "total_products":
-                len(df),
-
-            "data":
-                df.to_dict(
-                    orient="records"
-                )
-        }
-
-
-    except Exception as e:
-
-        return {
-
-            "success":
-                False,
-
-            "error":
-                str(e)
-        }
-
-
-# ============================================================
-# 14. ملخص مخاطر المخزون
-# ============================================================
-
-@app.get("/inventory/risk/summary")
-def get_inventory_risk_summary():
-
-    try:
-
-        if not RISK_DATA_PATH.exists():
-
-            return {
-
-                "success":
-                    False,
-
-                "error":
-                    "Risk analysis file not found."
-            }
-
-
-        df = pd.read_csv(
-            RISK_DATA_PATH
-        )
-
-
-        risk_column = (
-            "inventory_expiry_risk_level"
-        )
-
-
-        if risk_column not in df.columns:
-
-            return {
-
-                "success":
-                    False,
-
-                "error": (
-                    f"Column '{risk_column}' "
-                    "was not found."
-                )
-            }
-
-
-        distribution = (
-            df[risk_column]
-            .value_counts()
-            .to_dict()
-        )
-
-
-        return {
-
-            "success":
-                True,
-
-            "total_products":
-                len(df),
-
-            "risk_distribution": {
-
-                "Low":
-                    int(
-                        distribution.get(
-                            "Low",
-                            0
-                        )
-                    ),
-
-                "Medium":
-                    int(
-                        distribution.get(
-                            "Medium",
-                            0
-                        )
-                    ),
-
-                "High":
-                    int(
-                        distribution.get(
-                            "High",
-                            0
-                        )
-                    )
-            }
-        }
-
-
-    except Exception as e:
-
-        return {
-
-            "success":
-                False,
-
-            "error":
-                str(e)
-        }
-
-
-# ============================================================
-# 15. التنبؤ بالطلب
+# 11. Demand Prediction
 # ============================================================
 
 @app.post("/demand/predict")
 def predict_demand(
     request: DemandRequest
 ):
+
     try:
-        # =========================================================
-        # تشخيص طلب التنبؤ بالطلب
-        # =========================================================
-        print("=" * 60)
-        print("DEMAND PREDICTION REQUEST")
+
+        # ----------------------------------------------------
+        # بداية الطلب
+        # ----------------------------------------------------
+
         print("=" * 60)
 
-        print("Store ID:", request.store_id)
-        print("Total Price:", request.total_price)
-        print("Base Price:", request.base_price)
+        print(
+            "DEMAND PREDICTION REQUEST"
+        )
 
-        # =========================================================
-        # تحميل نموذج التنبؤ
-        # =========================================================
-        print("Loading DemandModel...")
+        print("=" * 60)
+
+        print(
+            "Store ID:",
+            request.store_id
+        )
+
+        print(
+            "Total Price:",
+            request.total_price
+        )
+
+        print(
+            "Base Price:",
+            request.base_price
+        )
+
+        # ----------------------------------------------------
+        # تحميل النموذج
+        # ----------------------------------------------------
+
+        print(
+            "Loading DemandModel..."
+        )
 
         model = get_demand_model()
 
-        print("DemandModel object:", model)
-        print("DemandModel type:", type(model))
+        print(
+            "DemandModel object:",
+            model
+        )
+
+        print(
+            "DemandModel type:",
+            type(model)
+        )
+
+        # ----------------------------------------------------
+        # التحقق من النموذج
+        # ----------------------------------------------------
 
         if model is None:
-            print("ERROR: Demand model is not available.")
+
+            print(
+                "ERROR: Demand model is not available."
+            )
 
             return {
+
                 "success": False,
-                "error": "Demand model is not available."
+
+                "error":
+                    "Demand model is not available."
             }
 
-        # =========================================================
-        # تنفيذ التنبؤ
-        # =========================================================
-        print("Calling model.predict()...")
+        # ----------------------------------------------------
+        # تشغيل التنبؤ
+        # ----------------------------------------------------
+
+        print(
+            "Calling model.predict()..."
+        )
 
         prediction = model.predict(
+
             store_id=request.store_id,
+
             total_price=request.total_price,
+
             base_price=request.base_price
         )
 
-        print("Prediction:", prediction)
-        print("Prediction type:", type(prediction))
+        print(
+            "Prediction:",
+            prediction
+        )
 
-        # =========================================================
-        # إرجاع النتيجة
-        # =========================================================
-        return {
+        print(
+            "Prediction type:",
+            type(prediction)
+        )
+
+        # ----------------------------------------------------
+        # النتيجة
+        # ----------------------------------------------------
+
+        result = {
+
             "success": True,
-            "model": "Random Forest Regressor",
+
+            "model":
+                "Random Forest Regressor",
 
             "input": {
-                "store_id": request.store_id,
-                "total_price": request.total_price,
-                "base_price": request.base_price
+
+                "store_id":
+                    request.store_id,
+
+                "total_price":
+                    request.total_price,
+
+                "base_price":
+                    request.base_price
             },
 
-            "prediction": float(prediction),
-
-            "predicted_units_sold": round(
+            "prediction":
                 float(prediction),
-                2
-            )
+
+            "predicted_units_sold":
+                round(
+                    float(prediction),
+                    2
+                )
         }
+
+        print(
+            "Demand prediction result:",
+            result
+        )
+
+        print("=" * 60)
+
+        return result
 
     except Exception as e:
 
-        # =========================================================
-        # طباعة الخطأ الكامل في Render Logs
-        # =========================================================
-        import traceback
-
-        print("=" * 60)
-        print("DEMAND PREDICTION ERROR")
         print("=" * 60)
 
-        print("Error type:", type(e).__name__)
-        print("Error:", str(e))
+        print(
+            "DEMAND PREDICTION ERROR"
+        )
 
-        print("Full traceback:")
+        print("=" * 60)
+
+        print(
+            "Error type:",
+            type(e).__name__
+        )
+
+        print(
+            "Error:",
+            str(e)
+        )
+
+        print(
+            "Full traceback:"
+        )
+
         traceback.print_exc()
 
-        # =========================================================
-        # إرجاع معلومات الخطأ للواجهة
-        # =========================================================
+        print("=" * 60)
+
         return {
+
             "success": False,
-            "error": str(e),
-            "error_type": type(e).__name__
+
+            "error":
+                str(e),
+
+            "error_type":
+                type(e).__name__
         }
+
+
 # ============================================================
-# 16. نتائج نماذج التنبؤ بالطلب
+# 12. Demand Model Results
 # ============================================================
 
 @app.get("/demand/results")
-def get_demand_results():
+def demand_results():
 
     try:
+
+        # ----------------------------------------------------
+        # التحقق من وجود الملف
+        # ----------------------------------------------------
 
         if not DEMAND_RESULTS_PATH.exists():
 
             return {
 
-                "success":
-                    False,
+                "success": False,
 
                 "error":
-                    "Demand results file not found."
+                    "Demand model results file not found.",
+
+                "path":
+                    str(DEMAND_RESULTS_PATH)
             }
 
+        # ----------------------------------------------------
+        # قراءة النتائج
+        # ----------------------------------------------------
 
         df = pd.read_csv(
             DEMAND_RESULTS_PATH
         )
 
+        # ----------------------------------------------------
+        # تحويل البيانات إلى JSON
+        # ----------------------------------------------------
 
-        df = df.where(
-            pd.notnull(df),
-            None
+        records = df.to_dict(
+            orient="records"
         )
 
+        # ----------------------------------------------------
+        # محاولة تحديد أفضل نموذج
+        # ----------------------------------------------------
 
         best_model = None
-
 
         if "R2" in df.columns:
 
@@ -739,12 +621,15 @@ def get_demand_results():
                 df["R2"].idxmax()
             ]
 
-
             best_model = {
 
                 "model":
-                    str(
-                        best_row.iloc[0]
+                    best_row.get(
+                        "Model",
+                        best_row.get(
+                            "model",
+                            "Unknown"
+                        )
                     ),
 
                 "R2":
@@ -753,45 +638,137 @@ def get_demand_results():
                     )
             }
 
-
         return {
 
-            "success":
-                True,
+            "success": True,
 
-            "data":
-                df.to_dict(
-                    orient="records"
-                ),
+            "results": records,
 
             "best_model":
                 best_model
         }
 
-
     except Exception as e:
 
         return {
 
-            "success":
-                False,
+            "success": False,
 
             "error":
-                str(e)
+                str(e),
+
+            "error_type":
+                type(e).__name__
         }
 
 
 # ============================================================
-# 17. معلومات نموذج الصور
+# 13. Dashboard Summary
 # ============================================================
 
-@app.get("/image/info")
-def get_image_model_info():
+@app.get("/dashboard/summary")
+def dashboard_summary():
+
+    result = {
+
+        "success": True,
+
+        "inventory": {
+
+            "status":
+                "available"
+        },
+
+        "demand": {
+
+            "status":
+                "available",
+
+            "results_endpoint":
+                "/demand/results",
+
+            "prediction_endpoint":
+                "/demand/predict"
+        },
+
+        "image_ai": {
+
+            "status":
+                "available"
+        },
+
+        "integration": {
+
+            "square":
+                square_client is not None
+        }
+    }
+
+    # --------------------------------------------------------
+    # قراءة بيانات المخاطر إذا كانت موجودة
+    # --------------------------------------------------------
 
     try:
 
-        classes = []
+        if RISK_DATA_PATH.exists():
 
+            df = pd.read_csv(
+                RISK_DATA_PATH
+            )
+
+            result["inventory"][
+                "rows"
+            ] = len(df)
+
+            result["inventory"][
+                "columns"
+            ] = list(df.columns)
+
+        else:
+
+            result["inventory"][
+                "rows"
+            ] = 0
+
+    except Exception as e:
+
+        result["inventory"][
+            "error"
+        ] = str(e)
+
+    # --------------------------------------------------------
+    # قراءة نتائج نموذج الطلب
+    # --------------------------------------------------------
+
+    try:
+
+        if DEMAND_RESULTS_PATH.exists():
+
+            df = pd.read_csv(
+                DEMAND_RESULTS_PATH
+            )
+
+            result["demand"][
+                "models_tested"
+            ] = len(df)
+
+        else:
+
+            result["demand"][
+                "models_tested"
+            ] = 0
+
+    except Exception as e:
+
+        result["demand"][
+            "error"
+        ] = str(e)
+
+    # --------------------------------------------------------
+    # Image AI
+    # --------------------------------------------------------
+
+    try:
 
         if IMAGE_CLASSES_PATH.exists():
 
@@ -799,199 +776,179 @@ def get_image_model_info():
                 IMAGE_CLASSES_PATH,
                 "r",
                 encoding="utf-8"
-            ) as file:
+            ) as f:
 
-                classes = json.load(
-                    file
-                )
+                classes = json.load(f)
 
+            result["image_ai"][
+                "classes"
+            ] = classes
+
+        else:
+
+            result["image_ai"][
+                "classes"
+            ] = []
+
+    except Exception as e:
+
+        result["image_ai"][
+            "error"
+        ] = str(e)
+
+    return result
+
+
+# ============================================================
+# 14. Image AI Information
+# ============================================================
+
+@app.get("/image/info")
+def image_info():
+
+    try:
+
+        classes = []
+
+        if IMAGE_CLASSES_PATH.exists():
+
+            with open(
+                IMAGE_CLASSES_PATH,
+                "r",
+                encoding="utf-8"
+            ) as f:
+
+                classes = json.load(f)
 
         return {
 
-            "success":
-                True,
+            "success": True,
 
             "model":
                 "MobileNetV2",
 
-            "dataset":
-                "RealWaste",
-
-            "accuracy":
-                0.7882,
-
-            "accuracy_percentage":
-                "78.82%",
-
-            "number_of_classes":
-                len(classes),
-
             "classes":
-                classes
-        }
+                classes,
 
+            "classes_count":
+                len(classes)
+        }
 
     except Exception as e:
 
         return {
 
-            "success":
-                False,
+            "success": False,
 
             "error":
-                str(e)
+                str(e),
+
+            "error_type":
+                type(e).__name__
         }
 
 
 # ============================================================
-# 18. تصنيف صورة مرفوعة
+# 15. Image Upload
 # ============================================================
 
-@app.post("/image/predict")
-async def predict_uploaded_image(
+@app.post("/image/upload")
+async def upload_image(
     file: UploadFile = File(...)
 ):
 
-    image_path = None
-
-
     try:
 
-        original_filename = (
-            file.filename or ""
-        )
-
-
-        extension = Path(
-            original_filename
-        ).suffix.lower()
-
+        # ----------------------------------------------------
+        # التحقق من نوع الملف
+        # ----------------------------------------------------
 
         allowed_extensions = {
 
             ".jpg",
-
             ".jpeg",
-
             ".png",
-
             ".webp"
         }
 
+        filename = file.filename or "uploaded_image"
+
+        extension = Path(
+            filename
+        ).suffix.lower()
 
         if extension not in allowed_extensions:
 
-            return {
+            raise HTTPException(
 
-                "success":
-                    False,
+                status_code=400,
 
-                "error": (
-                    "نوع الملف غير مدعوم. "
-                    "يرجى رفع JPG أو JPEG "
-                    "أو PNG أو WEBP."
+                detail=(
+                    "Unsupported image format. "
+                    "Use JPG, JPEG, PNG or WEBP."
                 )
-            }
-
-
-        unique_filename = (
-            f"{uuid.uuid4().hex}"
-            f"{extension}"
-        )
-
-
-        image_path = (
-            UPLOAD_DIR
-            / unique_filename
-        )
-
-
-        image_bytes = await file.read()
-
-
-        if not image_bytes:
-
-            return {
-
-                "success":
-                    False,
-
-                "error":
-                    "الصورة المرفوعة فارغة."
-            }
-
-
-        with open(
-            image_path,
-            "wb"
-        ) as output_file:
-
-            output_file.write(
-                image_bytes
             )
 
-
         # ----------------------------------------------------
-        # Lazy Loading
-        # يتم استيراد نموذج الصور عند طلب الصورة فقط.
+        # اسم آمن للملف
         # ----------------------------------------------------
 
-        from services.image_model import predict_image
-
-
-        prediction = predict_image(
-            image_path
+        safe_filename = (
+            Path(filename).name
         )
 
+        file_path = (
+            UPLOAD_DIR
+            / safe_filename
+        )
+
+        # ----------------------------------------------------
+        # حفظ الصورة
+        # ----------------------------------------------------
+
+        contents = await file.read()
+
+        with open(
+            file_path,
+            "wb"
+        ) as f:
+
+            f.write(contents)
 
         return {
 
-            "success":
-                True,
+            "success": True,
 
             "filename":
-                original_filename,
+                safe_filename,
 
-            "model":
-                "MobileNetV2",
+            "path":
+                str(file_path),
 
-            "dataset":
-                "RealWaste",
-
-            "prediction":
-                prediction
+            "size":
+                len(contents)
         }
 
+    except HTTPException:
+
+        raise
 
     except Exception as e:
 
         return {
 
-            "success":
-                False,
+            "success": False,
 
             "error":
-                str(e)
+                str(e),
+
+            "error_type":
+                type(e).__name__
         }
 
 
-    finally:
-
-        if image_path is not None:
-
-            try:
-
-                if image_path.exists():
-
-                    image_path.unlink()
-
-            except Exception:
-
-                pass
-
-
 # ============================================================
-# 19. Transformer Chatbot
+# 16. Chatbot
 # ============================================================
 
 @app.post("/chat")
@@ -1001,749 +958,496 @@ def chat(
 
     try:
 
-        question = (
-            request.question.strip()
+        message = (
+            request.message
+            .strip()
         )
 
-
-        if not question:
+        if not message:
 
             return {
 
-                "success":
-                    False,
+                "success": False,
 
                 "error":
-                    "Question cannot be empty."
+                    "Message cannot be empty."
             }
-
-
-        q = question.lower()
-
-
-        # ====================================================
-        # 1. أسئلة توزيع مخاطر المخزون
-        # ====================================================
-
-        risk_distribution_keywords = [
-
-            "توزيع المخاطر",
-
-            "توزيع مخاطر المخزون",
-
-            "ما توزيع مخاطر المخزون",
-
-            "مخاطر المخزون",
-
-            "توزيع المخزون من ناحية المخاطر",
-
-            "risk distribution",
-
-            "inventory risk"
-        ]
-
-
-        if any(
-            keyword in q
-            for keyword in risk_distribution_keywords
-        ):
-
-            risk_response = (
-                get_inventory_risk_summary()
-            )
-
-
-            if risk_response.get(
-                "success"
-            ):
-
-                distribution = (
-                    risk_response.get(
-                        "risk_distribution",
-                        {}
-                    )
-                )
-
-
-                low = distribution.get(
-                    "Low",
-                    0
-                )
-
-
-                medium = distribution.get(
-                    "Medium",
-                    0
-                )
-
-
-                high = distribution.get(
-                    "High",
-                    0
-                )
-
-
-                total = (
-                    risk_response.get(
-                        "total_products",
-                        0
-                    )
-                )
-
-
-                answer = (
-
-                    "توزيع مخاطر المخزون في "
-                    "SmartStock هو: "
-
-                    f"{low} منتج منخفض المخاطر، "
-
-                    f"{medium} منتج متوسط المخاطر، "
-
-                    f"و{high} منتج مرتفع المخاطر، "
-
-                    f"من إجمالي {total} منتجًا."
-                )
-
-
-                return {
-
-                    "success":
-                        True,
-
-                    "question":
-                        question,
-
-                    "answer":
-                        answer
-                }
-
-
-            return {
-
-                "success":
-                    False,
-
-                "question":
-                    question,
-
-                "error":
-                    risk_response.get(
-                        "error",
-                        "تعذر الحصول على "
-                        "بيانات المخاطر."
-                    )
-            }
-
-
-        # ====================================================
-        # 2. المنتجات عالية المخاطر
-        # ====================================================
-
-        high_risk_keywords = [
-
-            "عالية المخاطر",
-
-            "عالي المخاطر",
-
-            "مرتفع المخاطر",
-
-            "المنتجات عالية المخاطر",
-
-            "عدد المنتجات عالية",
-
-            "كم منتج عالي المخاطر",
-
-            "كم عدد المنتجات عالية المخاطر",
-
-            "high risk"
-        ]
-
-
-        if any(
-            keyword in q
-            for keyword in high_risk_keywords
-        ):
-
-            risk_response = (
-                get_inventory_risk_summary()
-            )
-
-
-            if risk_response.get(
-                "success"
-            ):
-
-                distribution = (
-                    risk_response.get(
-                        "risk_distribution",
-                        {}
-                    )
-                )
-
-
-                high = distribution.get(
-                    "High",
-                    0
-                )
-
-
-                answer = (
-
-                    "عدد المنتجات عالية "
-                    f"المخاطر هو {high} منتجًا."
-                )
-
-
-                return {
-
-                    "success":
-                        True,
-
-                    "question":
-                        question,
-
-                    "answer":
-                        answer
-                }
-
-
-            return {
-
-                "success":
-                    False,
-
-                "question":
-                    question,
-
-                "error":
-                    risk_response.get(
-                        "error",
-                        "تعذر الحصول على "
-                        "بيانات المخاطر."
-                    )
-            }
-
-
-        # ====================================================
-        # 3. أسئلة نموذج الصور
-        # ====================================================
-
-        image_keywords = [
-
-            "دقة نموذج الصور",
-
-            "دقة نموذج تصنيف الصور",
-
-            "نموذج الصور",
-
-            "تصنيف الصور",
-
-            "دقة الصور",
-
-            "دقة الموديل",
-
-            "image accuracy",
-
-            "image model",
-
-            "mobilenet"
-        ]
-
-
-        if any(
-            keyword in q
-            for keyword in image_keywords
-        ):
-
-            image_info = (
-                get_image_model_info()
-            )
-
-
-            if image_info.get(
-                "success"
-            ):
-
-                model_name = (
-                    image_info.get(
-                        "model",
-                        "MobileNetV2"
-                    )
-                )
-
-
-                accuracy = (
-                    image_info.get(
-                        "accuracy_percentage",
-                        "غير متوفر"
-                    )
-                )
-
-
-                classes_count = (
-                    image_info.get(
-                        "number_of_classes",
-                        0
-                    )
-                )
-
-
-                answer = (
-
-                    "نموذج تصنيف الصور "
-                    "المستخدم هو "
-
-                    f"{model_name}، "
-
-                    f"بدقة {accuracy}، "
-
-                    f"ويصنف {classes_count} فئات."
-                )
-
-
-                return {
-
-                    "success":
-                        True,
-
-                    "question":
-                        question,
-
-                    "answer":
-                        answer
-                }
-
-
-            return {
-
-                "success":
-                    False,
-
-                "question":
-                    question,
-
-                "error":
-                    image_info.get(
-                        "error",
-                        "تعذر الحصول على "
-                        "معلومات نموذج الصور."
-                    )
-            }
-
-
-        # ====================================================
-        # 4. أسئلة المخزون
-        # ====================================================
-
-        inventory_keywords = [
-
-            "المخزون المتبقي",
-
-            "كم المخزون",
-
-            "كمية المخزون",
-
-            "كم المتبقي",
-
-            "المتبقي من المخزون",
-
-            "رصيد المخزون",
-
-            "كم وحدة متبقية",
-
-            "كم عدد الوحدات المتبقية",
-
-            "inventory",
-
-            "stock",
-
-            "remaining stock"
-        ]
-
-
-        if any(
-            keyword in q
-            for keyword in inventory_keywords
-        ):
-
-            if square_client is None:
-
-                return {
-
-                    "success":
-                        False,
-
-                    "question":
-                        question,
-
-                    "error":
-                        "Square client is not available."
-                }
-
-
-            inventory_counts = (
-
-                square_client.get_inventory_count(
-
-                    catalog_object_id=None,
-
-                    location_id=LOCATION_ID
-                )
-            )
-
-
-            if inventory_counts is None:
-
-                return {
-
-                    "success":
-                        True,
-
-                    "question":
-                        question,
-
-                    "answer": (
-                        "تعذر الحصول على بيانات "
-                        "المخزون حاليًا."
-                    )
-                }
-
-
-            total_quantity = 0.0
-
-
-            for count in inventory_counts:
-
-                try:
-
-                    quantity = float(
-
-                        count.get(
-                            "quantity",
-                            0
-                        ) or 0
-                    )
-
-
-                    total_quantity += (
-                        quantity
-                    )
-
-
-                except (
-                    TypeError,
-                    ValueError
-                ):
-
-                    continue
-
-
-            if total_quantity.is_integer():
-
-                quantity_text = str(
-
-                    int(
-                        total_quantity
-                    )
-                )
-
-            else:
-
-                quantity_text = (
-
-                    f"{total_quantity:.2f}"
-                )
-
-
-            answer = (
-
-                "المخزون المتبقي حاليًا في "
-                "SmartStock هو "
-
-                f"{quantity_text} وحدة."
-            )
-
-
-            return {
-
-                "success":
-                    True,
-
-                "question":
-                    question,
-
-                "answer":
-                    answer
-            }
-
-
-        # ====================================================
-        # 5. الأسئلة العامة
-        # ====================================================
 
         # ----------------------------------------------------
-        # Lazy Loading للـ Transformer Chatbot
+        # محاولة استخدام Chatbot الموجود في المشروع
         # ----------------------------------------------------
 
-        from services.models.chatbot_service import generate_response
+        try:
 
+            from services.chatbot import Chatbot
 
-        answer = generate_response(
-            question
-        )
+            chatbot = Chatbot()
 
+            response = chatbot.chat(
+                message
+            )
 
-        return {
+            return {
 
-            "success":
-                True,
+                "success": True,
 
-            "question":
-                question,
+                "message":
+                    message,
 
-            "answer":
-                answer
-        }
+                "response":
+                    response
+            }
 
+        except Exception as chatbot_error:
+
+            print(
+                "Chatbot service error:",
+                str(chatbot_error)
+            )
+
+            # ------------------------------------------------
+            # رد احتياطي
+            # ------------------------------------------------
+
+            return {
+
+                "success": True,
+
+                "message":
+                    message,
+
+                "response":
+                    (
+                        "مرحباً بك في SMARTSTOCK AI. "
+                        "يمكنني مساعدتك في تحليل المخزون، "
+                        "التنبؤ بالطلب، المنتجات، "
+                        "المبيعات والمخاطر."
+                    ),
+
+                "fallback":
+                    True
+            }
 
     except Exception as e:
 
         return {
 
-            "success":
-                False,
-
-            "question":
-                request.question,
+            "success": False,
 
             "error":
-                str(e)
+                str(e),
+
+            "error_type":
+                type(e).__name__
         }
 
 
 # ============================================================
-# 20. Dashboard Summary
+# 17. Square - Test Connection
 # ============================================================
 
-@app.get("/dashboard/summary")
-def dashboard_summary():
+@app.get("/square/test")
+def square_test():
+
+    if square_client is None:
+
+        return {
+
+            "success": False,
+
+            "connected": False,
+
+            "error":
+                "Square client is not configured."
+        }
 
     try:
 
-        # ====================================================
-        # 1. بيانات المخاطر
-        # ====================================================
+        response = (
+            square_client.locations.list()
+        )
 
-        risk_distribution = {
+        locations = []
 
-            "Low":
-                0,
+        if hasattr(
+            response,
+            "locations"
+        ):
 
-            "Medium":
-                0,
+            locations = [
 
-            "High":
-                0
-        }
+                {
 
+                    "id":
+                        location.id,
 
-        total_products = 0
+                    "name":
+                        location.name,
 
+                    "status":
+                        location.status,
 
-        if RISK_DATA_PATH.exists():
+                    "country":
+                        location.country,
 
-            risk_df = pd.read_csv(
-                RISK_DATA_PATH
-            )
-
-
-            total_products = len(
-                risk_df
-            )
-
-
-            if (
-                "inventory_expiry_risk_level"
-                in risk_df.columns
-            ):
-
-                counts = (
-
-                    risk_df[
-                        "inventory_expiry_risk_level"
-                    ]
-
-                    .value_counts()
-
-                    .to_dict()
-                )
-
-
-                risk_distribution = {
-
-                    "Low":
-                        int(
-                            counts.get(
-                                "Low",
-                                0
-                            )
-                        ),
-
-                    "Medium":
-                        int(
-                            counts.get(
-                                "Medium",
-                                0
-                            )
-                        ),
-
-                    "High":
-                        int(
-                            counts.get(
-                                "High",
-                                0
-                            )
-                        )
+                    "currency":
+                        location.currency
                 }
 
-
-        # ====================================================
-        # 2. نتائج Demand Model
-        # ====================================================
-
-        demand_info = {
-
-            "model":
-                "Random Forest Regressor",
-
-            "R2":
-                0.6092,
-
-            "MAE":
-                19.1346,
-
-            "RMSE":
-                35.8088
-        }
-
-
-        if DEMAND_RESULTS_PATH.exists():
-
-            try:
-
-                demand_df = pd.read_csv(
-                    DEMAND_RESULTS_PATH
-                )
-
-
-                if "R2" in demand_df.columns:
-
-                    best_row = demand_df.loc[
-                        demand_df["R2"].idxmax()
-                    ]
-
-
-                    demand_info = {
-
-                        "model":
-                            str(
-                                best_row.iloc[0]
-                            ),
-
-                        "R2":
-                            float(
-                                best_row["R2"]
-                            ),
-
-                        "MAE":
-                            float(
-                                best_row["MAE"]
-                            )
-                            if "MAE"
-                            in demand_df.columns
-                            else None,
-
-                        "RMSE":
-                            float(
-                                best_row["RMSE"]
-                            )
-                            if "RMSE"
-                            in demand_df.columns
-                            else None
-                    }
-
-
-            except Exception:
-
-                pass
-
-
-        # ====================================================
-        # 3. معلومات Image AI
-        # ====================================================
-
-        image_info = {
-
-            "model":
-                "MobileNetV2",
-
-            "dataset":
-                "RealWaste",
-
-            "accuracy":
-                0.7882,
-
-            "accuracy_percentage":
-                "78.82%"
-        }
-
-
-        # ====================================================
-        # 4. النتيجة النهائية
-        # ====================================================
+                for location
+                in response.locations
+            ]
 
         return {
 
-            "success":
-                True,
+            "success": True,
 
-            "inventory": {
+            "connected": True,
 
-                "total_products":
-                    total_products,
-
-                "risk_distribution":
-                    risk_distribution
-            },
-
-            "demand":
-                demand_info,
-
-            "image":
-                image_info,
-
-            "integrations": {
-
-                "square":
-                    square_client is not None,
-
-                "chatbot":
-                    True,
-
-                "fastapi":
-                    True
-            }
+            "locations":
+                locations
         }
-
 
     except Exception as e:
 
         return {
 
-            "success":
-                False,
+            "success": False,
+
+            "connected": False,
 
             "error":
-                str(e)
+                str(e),
+
+            "error_type":
+                type(e).__name__
         }
+
+
+# ============================================================
+# 18. Square - Locations
+# ============================================================
+
+@app.get("/square/locations")
+def square_locations():
+
+    if square_client is None:
+
+        return {
+
+            "success": False,
+
+            "error":
+                "Square client is not configured."
+        }
+
+    try:
+
+        response = (
+            square_client.locations.list()
+        )
+
+        locations = []
+
+        if hasattr(
+            response,
+            "locations"
+        ):
+
+            for location in response.locations:
+
+                locations.append({
+
+                    "id":
+                        location.id,
+
+                    "name":
+                        location.name,
+
+                    "status":
+                        location.status,
+
+                    "country":
+                        location.country,
+
+                    "currency":
+                        location.currency
+                })
+
+        return {
+
+            "success": True,
+
+            "count":
+                len(locations),
+
+            "locations":
+                locations
+        }
+
+    except Exception as e:
+
+        return {
+
+            "success": False,
+
+            "error":
+                str(e),
+
+            "error_type":
+                type(e).__name__
+        }
+
+
+# ============================================================
+# 19. Square - Catalog
+# ============================================================
+
+@app.get("/square/catalog")
+def square_catalog():
+
+    if square_client is None:
+
+        return {
+
+            "success": False,
+
+            "error":
+                "Square client is not configured."
+        }
+
+    try:
+
+        response = (
+            square_client.catalog.list()
+        )
+
+        objects = []
+
+        if hasattr(
+            response,
+            "objects"
+        ):
+
+            for obj in response.objects:
+
+                item = {
+
+                    "id":
+                        obj.id,
+
+                    "type":
+                        obj.type
+                }
+
+                if hasattr(
+                    obj,
+                    "item_data"
+                ):
+
+                    item[
+                        "item_data"
+                    ] = str(
+                        obj.item_data
+                    )
+
+                if hasattr(
+                    obj,
+                    "item_variation_data"
+                ):
+
+                    item[
+                        "item_variation_data"
+                    ] = str(
+                        obj.item_variation_data
+                    )
+
+                objects.append(
+                    item
+                )
+
+        return {
+
+            "success": True,
+
+            "count":
+                len(objects),
+
+            "objects":
+                objects
+        }
+
+    except Exception as e:
+
+        return {
+
+            "success": False,
+
+            "error":
+                str(e),
+
+            "error_type":
+                type(e).__name__
+        }
+
+
+# ============================================================
+# 20. Square - Inventory
+# ============================================================
+
+@app.get("/square/inventory")
+def square_inventory():
+
+    if square_client is None:
+
+        return {
+
+            "success": False,
+
+            "error":
+                "Square client is not configured."
+        }
+
+    try:
+
+        response = (
+            square_client.inventory.batch_retrieve_inventory_counts(
+                body={
+                    "catalog_object_ids": []
+                }
+            )
+        )
+
+        counts = []
+
+        if hasattr(
+            response,
+            "counts"
+        ):
+
+            for count in response.counts:
+
+                counts.append({
+
+                    "catalog_object_id":
+                        count.catalog_object_id,
+
+                    "state":
+                        count.state,
+
+                    "quantity":
+                        count.quantity,
+
+                    "location_id":
+                        getattr(
+                            count,
+                            "location_id",
+                            None
+                        )
+                })
+
+        return {
+
+            "success": True,
+
+            "count":
+                len(counts),
+
+            "inventory":
+                counts
+        }
+
+    except Exception as e:
+
+        return {
+
+            "success": False,
+
+            "error":
+                str(e),
+
+            "error_type":
+                type(e).__name__
+        }
+
+
+# ============================================================
+# 21. Global Exception Handler
+# ============================================================
+
+@app.exception_handler(Exception)
+async def global_exception_handler(
+    request,
+    exc
+):
+
+    print("=" * 60)
+
+    print(
+        "GLOBAL API ERROR"
+    )
+
+    print("=" * 60)
+
+    print(
+        "Path:",
+        request.url.path
+    )
+
+    print(
+        "Method:",
+        request.method
+    )
+
+    print(
+        "Error type:",
+        type(exc).__name__
+    )
+
+    print(
+        "Error:",
+        str(exc)
+    )
+
+    traceback.print_exc()
+
+    print("=" * 60)
+
+    return {
+
+        "success": False,
+
+        "error":
+            str(exc),
+
+        "error_type":
+            type(exc).__name__,
+
+        "path":
+            request.url.path
+    }
+
+
+# ============================================================
+# 22. تشغيل مباشر
+# ============================================================
+
+if __name__ == "__main__":
+
+    import uvicorn
+
+    uvicorn.run(
+
+        "api.main:app",
+
+        host="0.0.0.0",
+
+        port=int(
+            os.getenv(
+                "PORT",
+                "8000"
+            )
+        ),
+
+        reload=False
+    )
