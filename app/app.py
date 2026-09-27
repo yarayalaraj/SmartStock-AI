@@ -381,7 +381,7 @@ if selected_page == "🏠 الرئيسية":
 
         inventory_items = (
             inventory_response.get(
-                "data",
+                "inventory",
                 [],
             )
         )
