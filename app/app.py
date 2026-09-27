@@ -371,9 +371,8 @@ if selected_page == "🏠 الرئيسية":
     # --------------------------------------------------------
 
     inventory_response = get_api(
-        "/inventory"
+        "/square/inventory"
     )
-
     inventory_items = []
 
     total_units = 0
