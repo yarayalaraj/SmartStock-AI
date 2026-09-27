@@ -713,6 +713,42 @@ def demand_results():
         }
 
 
+@app.get("/demand/debug")
+def demand_debug():
+
+    try:
+        from services.demand_model import DemandModel
+        from pathlib import Path
+
+        model = DemandModel()
+
+        model_path = Path(model.model_path)
+
+        result = {
+            "model_path": str(model_path),
+            "model_exists": model_path.exists(),
+            "model_size_bytes": (
+                model_path.stat().st_size
+                if model_path.exists()
+                else None
+            )
+        }
+
+        loaded_model = model.load_model()
+
+        result["load_success"] = True
+        result["loaded_model_type"] = type(loaded_model).__name__
+
+        return result
+
+    except Exception as e:
+
+        return {
+            "load_success": False,
+            "error_type": type(e).__name__,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
 # ============================================================
 # 14. Dashboard Summary
 # ============================================================
